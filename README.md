@@ -4,30 +4,34 @@
 
 ## ✨ Key Features
 
-### 1. Intuitive Graph Interactions
+### 1. Smart Layout & Organization
+
+Automatically organize your messy graph with a single click. The intelligent layout algorithm centers parent nodes and sinks completed, isolated tasks to the bottom to keep your view clean.
+
+### 2. Intuitive Graph Interactions
 
 Manage your tasks spatially with fluid mouse gestures.
 
-- **Connect & Organize**: Drag from one node handles to another to create dependencies. Right-click an edge to delete it.
+- **Connect & Edit**: Drag to connect tasks. Right-click connections to delete them.
     
-- **Smart Selection**: Hold `Left Click` to box-select multiple nodes and move them as a group.
+- **Text Notes**: Right-click on the canvas to add sticky notes for context or headers.
     
-- **Mind Mapping**: Right-click anywhere on the canvas to add **Text Notes** (Sticky Notes) for headers or context.
+- **Batch Move**: Hold `Left Click` to box-select multiple nodes and move them as a group.
     
 
 |   |   |   |
 |---|---|---|
-|**Connections**|**Box Selection**|**Text Notes**|
+|**Connect & Delete**|**Add Text Notes**|**Box Selection**|
 ||||
 
-### 2. Seamless Creation Flow
+### 3. Seamless Creation Flow
 
 Don't break your flow. Create new tasks directly from the canvas.
 
 - **Drag-to-Create**: Drag a connection line to an empty space to instantly open the creation modal. The new task is automatically appended to the parent file and linked.
     
 
-### 3. Powerful Workflow Management
+### 4. Powerful Workflow Management
 
 Manage task status directly without opening files.
 
@@ -40,15 +44,8 @@ Manage task status directly without opening files.
 
 |   |   |
 |---|---|
-|**Sidebar Drag & Drop**|**Click to Toggle**|
+|**Sidebar Drag & Drop**|**Click to Toggle & Navigate**|
 |||
-
-### 4. Smart Layout & Context Menu
-
-- **Auto Layout**: One click on the `⚡ Layout` button automatically arranges your graph. It intelligently centers parent nodes and sinks completed tasks to the bottom.
-    
-- **Context Menu**: Right-click any task node to quickly change its priority or status color.
-    
 
 ## 🚀 Installation
 
@@ -81,6 +78,8 @@ Manage task status directly without opening files.
 - Type `#` to autocomplete tags.
     
 - Use the metadata toolbar to insert Dates (`📅`), Priorities (`🔺`), and more.
+    
+- Right-click a task node to quickly change its status color via the context menu.
     
 
 ## 🤝 Contributing
