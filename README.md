@@ -1,4 +1,4 @@
-# Spatial Task Graph for Obsidian <img src="icon.png" alt="Logo" height="24" style="vertical-align: middle;"/>
+# Spatial Task Graph for Obsidian
 
 Spatial Task Graph transforms your linear Obsidian tasks into a dynamic, interactive infinite canvas. Visualize dependencies, manage workflows with a Kanban-style sidebar, and organize your thoughts spatially—all with a premium Apple-style aesthetic.
 
