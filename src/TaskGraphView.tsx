@@ -16,17 +16,14 @@ import ReactFlow, {
   ReactFlowProvider,
   useReactFlow,
   SelectionMode,
-  OnConnectStart,
-  OnConnectEnd,
   ConnectionLineType
 } from 'reactflow';
 import 'reactflow/dist/style.css'; 
 
-import SpatialTaskGraphPlugin, { GraphBoard } from './main';
+import TaskGraphPlugin, { GraphBoard } from './main';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
-// 🌟 核心样式
 const REACT_FLOW_CORE_STYLES = `
     .react-flow{direction:ltr;width:100%;height:100%;position:relative;z-index:0;overflow:hidden}
     .react-flow__background{background-color:transparent;z-index:-1;width:100%;height:100%;top:0;left:0;position:absolute}
@@ -47,55 +44,41 @@ const REACT_FLOW_CORE_STYLES = `
     .react-flow__selection { background: rgba(var(--interactive-accent-rgb), 0.1); border: 1px solid var(--interactive-accent); border-radius: 6px; }
 `;
 
-// 🌟 自定义样式
 const CUSTOM_STYLES = `
     .task-graph-container { width: 100%; height: 100%; position: relative; background: var(--background-primary); font-family: var(--font-interface); color: var(--text-normal); }
-    
-    input[type="checkbox"].custom-checkbox {
-        appearance: none; -webkit-appearance: none; width: 18px; height: 18px; border: 1.5px solid var(--text-muted); border-radius: 50%; margin: 0 8px 0 0; padding: 0; cursor: pointer; position: relative; display: inline-flex; align-items: center; justify-content: center; background-color: transparent; flex-shrink: 0; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    }
+    input[type="checkbox"].custom-checkbox { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; border: 1.5px solid var(--text-muted); border-radius: 50%; margin: 0 8px 0 0; padding: 0; cursor: pointer; position: relative; display: inline-flex; align-items: center; justify-content: center; background-color: transparent; flex-shrink: 0; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
     input[type="checkbox"].custom-checkbox:hover { border-color: var(--interactive-accent); background-color: rgba(var(--interactive-accent-rgb), 0.1); }
     input[type="checkbox"].custom-checkbox:checked { background-color: var(--interactive-accent); border-color: var(--interactive-accent); }
     input[type="checkbox"].custom-checkbox:checked::after { content: ''; width: 100%; height: 100%; background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'); background-size: 12px; background-position: center; background-repeat: no-repeat; }
-
     input[type="checkbox"].filter-checkbox { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; border: 1px solid var(--text-muted); border-radius: 4px; margin-right: 6px; cursor: pointer; position: relative; }
     input[type="checkbox"].filter-checkbox:checked { background-color: var(--text-normal); border-color: var(--text-normal); }
     input[type="checkbox"].filter-checkbox:checked::after { content: ''; position: absolute; top: 1px; left: 4px; width: 4px; height: 8px; border: solid var(--background-primary); border-width: 0 2px 2px 0; transform: rotate(45deg); }
-
     .custom-handle { width: 24px !important; height: 24px !important; background: transparent !important; border: none !important; display: flex; align-items: center; justify-content: center; z-index: 20 !important; }
     .custom-handle::after { content: ""; display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); border: 2px solid var(--background-primary); transition: transform 0.2s, background 0.2s; }
     .custom-handle:hover::after { transform: scale(1.2); background: var(--interactive-accent); }
     .custom-handle-right::after { background: var(--interactive-accent); }
-    
     .task-node-wrapper { position: relative; width: 240px; height: auto; min-height: 80px; background: var(--background-secondary); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); transition: all 0.2s; border: 1px solid var(--background-modifier-border); overflow: hidden; display: flex; flex-direction: column; }
     .task-node-wrapper:hover { transform: translateY(-2px) scale(1.01); box-shadow: 0 12px 24px rgba(0,0,0,0.12); z-index: 10; }
     .react-flow__node.selected .task-node-wrapper { border: 1px solid var(--interactive-accent); box-shadow: 0 0 0 3px rgba(var(--interactive-accent-rgb), 0.2); }
-
     .text-node-wrapper { min-width: 150px; max-width: 300px; background: var(--background-primary-alt); color: var(--text-normal); border-radius: 8px; padding: 12px; font-family: var(--font-text); box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; position: relative; height: auto; border: 1px dashed var(--text-accent); transition: all 0.2s; }
     .react-flow__node.selected .text-node-wrapper { border-style: solid; border-color: var(--interactive-accent); }
     .text-node-textarea { background: transparent; border: none; color: inherit; width: 100%; text-align: center; resize: none; font-size: 14px; outline: none; overflow: hidden; }
-
     .node-tag { font-size: 10px; padding: 3px 8px; border-radius: 12px; font-weight: 600; background-color: var(--background-modifier-active-hover); color: var(--text-muted); }
     .edit-btn { opacity: 0; transition: all 0.2s; cursor: pointer; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--background-modifier-hover); color: var(--text-normal); flex-shrink: 0; font-size: 12px;}
     .task-node-wrapper:hover .edit-btn { opacity: 1; }
     .edit-btn:hover { background: var(--interactive-accent); color: white; }
-
     .open-file-btn { font-size: 9px; color: var(--text-muted); cursor: pointer; padding: 2px 6px; border-radius: 4px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); transition: all 0.2s; display: flex; align-items: center; gap: 4px; max-width: 80px; }
     .open-file-btn:hover { background: var(--interactive-accent); color: white; border-color: var(--interactive-accent); }
     .open-file-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
     .edit-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; pointer-events: all; }
     .edit-modal { background: var(--background-primary); padding: 24px; border-radius: 16px; width: 480px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); display: flex; flex-direction: column; gap: 16px; border: 1px solid var(--background-modifier-border); position: relative; }
-    
     .suggestion-list { position: absolute; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 8px; box-shadow: 0 8px 16px rgba(0,0,0,0.2); max-height: 150px; overflow-y: auto; z-index: 200; width: 200px; }
     .suggestion-item { padding: 6px 12px; font-size: 13px; cursor: pointer; color: var(--text-normal); display: flex; align-items: center; gap: 6px; }
     .suggestion-item:hover, .suggestion-item.selected { background: var(--interactive-accent); color: white; }
-    
     .metadata-toolbar { display: flex; gap: 8px; padding: 8px 0; border-top: 1px solid var(--background-modifier-border); margin-top: -8px; }
     .metadata-btn { padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 14px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); transition: all 0.1s; display: flex; align-items: center; gap: 4px; color: var(--text-muted); }
     .metadata-btn:hover { background: var(--background-modifier-hover); color: var(--text-normal); transform: translateY(-1px); }
     .metadata-label { font-size: 11px; }
-
     .task-sidebar { position: absolute; top: 10px; left: 10px; bottom: 10px; width: 240px; background: var(--background-secondary); opacity: 0.95; backdrop-filter: blur(20px); border-radius: 16px; border: 1px solid var(--background-modifier-border); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); z-index: 20; display: flex; flex-direction: column; padding: 16px; pointer-events: all; overflow: hidden; }
     .sidebar-section { margin-bottom: 16px; flex: 1; min-height: 0; display: flex; flex-direction: column; }
     .sidebar-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; }
@@ -111,7 +94,6 @@ const CUSTOM_STYLES = `
 const STATUS_COLORS = { 'in_progress': '#34c759', 'pending': '#ff9500', 'finished': '#af52de', 'blocked': '#ff3b30', 'backlog': '#8e8e93', 'default': 'var(--text-muted)' };
 const extractTags = (text: string) => { if (!text) return { tags: [], cleanText: '' }; const tagRegex = /#[\w\u4e00-\u9fa5]+(\/[\w\u4e00-\u9fa5]+)*/g; const tags = text.match(tagRegex) || []; const cleanText = text.replace(tagRegex, '').trim(); return { tags, cleanText }; };
 
-// --- 组件：任务节点 (通过 React.memo 避免拖拽卡顿) ---
 const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
   const { tags, cleanText } = extractTags(data.label);
   const statusColor = STATUS_COLORS[data.customStatus as keyof typeof STATUS_COLORS] || STATUS_COLORS['default'];
@@ -128,12 +110,10 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
             <span style={{ fontSize: '10px', fontWeight: '600', color: statusColor, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{data.customStatus === 'default' ? 'TASK' : data.customStatus.replace('_', ' ')}</span>
             <div className="edit-btn" onClick={(e) => { e.stopPropagation(); data.onEdit(data); }} title="Edit Task">✎</div>
           </div>
-          
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
             <input type="checkbox" className="custom-checkbox" checked={data.status === 'x'} onChange={() => {}} onClick={handleCheckboxClick} style={{ marginTop: '3px' }} />
             <div style={{ fontSize: '13px', lineHeight: '1.5', color: 'var(--text-normal)', fontWeight: '500', marginBottom: '10px', wordBreak: 'break-word', whiteSpace: 'pre-wrap', opacity: (data.status === 'x' ? 0.6 : 1), textDecoration: (data.status === 'x' ? 'line-through' : 'none') }}>{cleanText || data.label}</div>
           </div>
-
           <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '8px' }}>
               <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', flex: 1 }}>{tags.map((tag, i) => (<span key={i} className="node-tag">{tag}</span>))}</div>
               <div className="open-file-btn" onClick={handleOpenFile} title="Open File">↗ <span>{data.file}</span></div>
@@ -153,10 +133,7 @@ const TextNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
     return (
         <div className="text-node-wrapper">
             <Handle type="target" position={Position.Left} isConnectable={isConnectable} className="custom-handle" style={{ left: '-12px', top: '50%', transform: 'translateY(-50%)' }} />
-            <textarea 
-                className="text-node-textarea" value={text} onChange={(e) => setText(e.target.value)} onBlur={handleBlur} rows={rows} placeholder="Note..." 
-                onMouseDown={(e) => e.stopPropagation()} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ height: 'auto' }} 
-            />
+            <textarea className="text-node-textarea" value={text} onChange={(e) => setText(e.target.value)} onBlur={handleBlur} rows={rows} placeholder="Note..." onMouseDown={(e) => e.stopPropagation()} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ height: 'auto' }} />
             <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="custom-handle custom-handle-right" style={{ right: '-12px', top: '50%', transform: 'translateY(-50%)' }} />
             <Handle type="source" position={Position.Bottom} isConnectable={isConnectable} className="custom-handle" style={{ bottom: '-12px', left: '50%', transform: 'translateX(-50%)' }} />
         </div>
@@ -173,13 +150,11 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
 
     const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const val = e.target.value; setText(val);
-        setText(val);
         const cursorPos = e.target.selectionStart; const textBeforeCursor = val.slice(0, cursorPos); const match = textBeforeCursor.match(/#([\w\u4e00-\u9fa5]*)$/);
         if (match) { const query = (match[1] || '').toLowerCase(); const filtered = allTags.filter(t => t.toLowerCase().includes(query)).slice(0, 10); if (filtered.length > 0) { setSuggestions(filtered); setSuggestionPos({ top: 140, left: 30 }); } else { setSuggestions([]); } } else { setSuggestions([]); }
     };
     const insertTag = (tag: string) => { const cursorPos = textareaRef.current?.selectionStart || text.length; const textBeforeCursor = text.slice(0, cursorPos); const textAfterCursor = text.slice(cursorPos); const lastHashIndex = textBeforeCursor.lastIndexOf('#'); const newText = textBeforeCursor.slice(0, lastHashIndex) + '#' + tag + ' ' + textAfterCursor; setText(newText); setSuggestions([]); textareaRef.current?.focus(); };
     const insertMetadata = (symbol: string) => { const newText = text + ` ${symbol} `; setText(newText); textareaRef.current?.focus(); };
-
     const handleKeyDown = (e: React.KeyboardEvent) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSave(text); } };
 
     return (
@@ -244,7 +219,7 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     const [tempName, setTempName] = React.useState('');
     React.useEffect(() => { setIsRenaming(false); setTempName(currentBoard?.name || ''); }, [currentBoard]);
     const handleSaveName = () => { if (tempName.trim()) onRenameBoard(tempName); setIsRenaming(false); };
-    const handleDelete = () => { if (boards.length <= 1) { new Notice("Cannot delete the only board."); return; } if (window.confirm(`Delete board "${currentBoard.name}"?`)) onDeleteBoard(activeBoardId); };
+    const handleDelete = () => { if (boards.length <= 1) { new Notice("Cannot delete the only board."); return; } if (window.confirm(`Delete board "${currentBoard?.name || 'Board'}"?`)) onDeleteBoard(activeBoardId); };
     const stopPropagation = (e: React.MouseEvent | React.KeyboardEvent) => { e.stopPropagation(); };
     const stopKeys = (e: React.KeyboardEvent) => e.stopPropagation();
 
@@ -256,7 +231,7 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
 };
 
 // --- 主图表组件 ---
-const TaskGraphComponent = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => {
+const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [activeBoardId, setActiveBoardId] = React.useState(plugin.settings.lastActiveBoardId);
@@ -279,7 +254,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => {
 
   React.useEffect(() => { 
       // @ts-ignore
-      plugin.viewRefresh = () => setRefreshKey((prev: number) => prev + 1); 
+      plugin.viewRefresh = () => setRefreshKey(prev => prev + 1); 
   }, []);
 
   React.useEffect(() => {
@@ -294,13 +269,9 @@ const TaskGraphComponent = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => {
       const savedNodeStatus = boardConfig?.data.nodeStatus || {};
       const savedTextNodes = boardConfig?.data.textNodes || [];
 
-      const taskNodes: Node[] = tasks.map((t: any, index: number) => {
-        let posX = savedLayout[t.id]?.x;
-        let posY = savedLayout[t.id]?.y;
-        if (typeof posX !== 'number' || isNaN(posX) || typeof posY !== 'number' || isNaN(posY)) { 
-            posX = (index % 3) * 320; 
-            posY = Math.floor(index / 3) * 200; 
-        }
+      const taskNodes: Node[] = tasks.map((t, index) => {
+        let posX = savedLayout[t.id]?.x ?? ((index % 3) * 320);
+        let posY = savedLayout[t.id]?.y ?? (Math.floor(index / 3) * 200);
         let finalCustomStatus = savedNodeStatus[t.id] || 'default';
         if (t.status === 'x') finalCustomStatus = 'finished';
 
@@ -341,21 +312,18 @@ const TaskGraphComponent = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => {
       const node = nodes.find(n => n.id === id); if (!node) return;
       const newStatus = (currentStatus === ' ' || currentStatus === '/') ? 'x' : ' ';
       const newCustomStatus = newStatus === 'x' ? 'finished' : 'backlog'; 
-      setNodes((nds: Node[]) => nds.map((n: Node) =>{ if (n.id === id) { return { ...n, data: { ...n.data, status: newStatus, customStatus: newCustomStatus } }; } return n; }));
+      setNodes(nds => nds.map(n => { if (n.id === id) { return { ...n, data: { ...n.data, status: newStatus, customStatus: newCustomStatus } }; } return n; }));
       const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const nodeStatus = board.data.nodeStatus || {}; nodeStatus[id] = newCustomStatus; await plugin.saveBoardData(activeBoardId, { nodeStatus }); }
       const file = plugin.app.vault.getAbstractFileByPath(node.data.path);
       if (file instanceof TFile) {
            const content = await plugin.app.vault.read(file); const lines = content.split('\n');
-           if (lines.length > node.data.line) {
-               let line = lines[node.data.line];
-               if (typeof line === 'string') { // 扩大防线范围并限定类型
-                   line = line.replace(/(- \[)(.)(\])/, `$1${newStatus}$3`);
-                   const today = new Date(); const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-                   const completionTag = ` ✅ ${dateStr}`; const completionRegex = / ✅ \d{4}-\d{2}-\d{2}/g;
-                   if (newStatus === 'x') { if (!completionRegex.test(line)) { line = line.trimEnd() + completionTag; } } else { line = line.replace(completionRegex, ''); }
-                   lines[node.data.line] = line; await plugin.app.vault.modify(file, lines.join('\n'));
-               }
-           }
+           let line = lines[node.data.line]; 
+           if (line === undefined) return;
+           line = line.replace(/(- \[)(.)(\])/, `$1${newStatus}$3`);
+           const today = new Date(); const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+           const completionTag = ` ✅ ${dateStr}`; const completionRegex = / ✅ \d{4}-\d{2}-\d{2}/g;
+           if (newStatus === 'x') { if (!completionRegex.test(line)) { line = line.trimEnd() + completionTag; } } else { line = line.replace(completionRegex, ''); }
+           lines[node.data.line] = line; await plugin.app.vault.modify(file, lines.join('\n'));
       }
   };
 
@@ -370,7 +338,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => {
           const newEdge = { id: `e${createTarget.sourceNodeId}-${newId}`, source: createTarget.sourceNodeId, target: newId, animated: true };
           const board = plugin.settings.boards.find(b => b.id === activeBoardId);
           if (board) { board.data.edges = [...board.data.edges, newEdge]; board.data.layout = { ...board.data.layout, [newId]: { x: newX, y: newY } }; await plugin.saveSettings(); }
-          setCreateTarget(null); setRefreshKey((prev: number) => prev + 1);
+          setCreateTarget(null); setRefreshKey(prev => prev + 1);
       }
   };
 
@@ -378,24 +346,18 @@ const TaskGraphComponent = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => {
       connectionMadeRef.current = true; 
       if (!params.source || !params.target) return;
 
-      // 乐观 UI 解决幽灵连线
       const newSourceId = await plugin.ensureBlockId(activeBoardId, params.source);
       const newTargetId = await plugin.ensureBlockId(activeBoardId, params.target);
 
-      const newEdge = { 
-          id: `e${newSourceId}-${newTargetId}`, 
-          source: newSourceId, 
-          target: newTargetId, 
-          animated: true 
-      };
+      const newEdge = { id: `e${newSourceId}-${newTargetId}`, source: newSourceId, target: newTargetId, animated: true };
 
-      setNodes((nds: Node[]) => nds.map((n: Node) =>{
+      setNodes(nds => nds.map(n => {
           if (n.id === params.source) return { ...n, id: newSourceId };
           if (n.id === params.target) return { ...n, id: newTargetId };
           return n;
       }));
 
-      setEdges((eds: Edge[]) => {
+      setEdges((eds) => {
           const updatedEds = eds.map(e => {
               let eSource = e.source === params.source ? newSourceId : (e.source === params.target ? newTargetId : e.source);
               let eTarget = e.target === params.source ? newSourceId : (e.target === params.target ? newTargetId : e.target);
@@ -411,11 +373,23 @@ const TaskGraphComponent = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => {
           }
           await plugin.saveSettings(); 
       }
-      
-      setRefreshKey((prev: number) => prev + 1);
+      setRefreshKey(prev => prev + 1);
   }, [plugin, activeBoardId, setEdges, setNodes]);
 
-  const onNodeDragStop = React.useCallback((event: any, node: Node) => { setNodes((nds: Node[]) => nds.map(n => n.id === node.id ? node : n)); const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(!board) return; if (node.type === 'task') { const layout = { ...board.data.layout, [node.id]: node.position }; plugin.saveBoardData(activeBoardId, { layout }); } else if (node.type === 'text') { const textNodes = board.data.textNodes.map(tn => tn.id === node.id ? { ...tn, x: node.position.x, y: node.position.y } : tn); plugin.saveBoardData(activeBoardId, { textNodes }); } }, [plugin, activeBoardId, setNodes]);
+  const onNodeDragStop = React.useCallback((event: any, node: Node) => { 
+      setNodes((nds) => nds.map(n => n.id === node.id ? node : n)); 
+      const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
+      if(!board) return; 
+      
+      if (node.type === 'task') { 
+          const layout = { ...board.data.layout, [node.id]: node.position }; 
+          plugin.saveBoardData(activeBoardId, { layout }); 
+      } else if (node.type === 'text') { 
+          const textNodes = board.data.textNodes.map(tn => tn.id === node.id ? { ...tn, x: node.position.x, y: node.position.y } : tn); 
+          plugin.saveBoardData(activeBoardId, { textNodes }); 
+      } 
+  }, [plugin, activeBoardId, setNodes]);
+  
   const handleSaveTextNode = async (id: string, text: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(board) { const textNodes = board.data.textNodes.map(tn => tn.id === id ? { ...tn, text } : tn); await plugin.saveBoardData(activeBoardId, { textNodes }); } };
   const handleEditTask = (taskData: any) => { setEditTarget({ id: taskData.id, text: taskData.label, path: taskData.path, line: taskData.line }); };
   const saveTaskEdit = async (text: string) => { if (!editTarget) return; await plugin.updateTaskContent(editTarget.path, editTarget.line, text); setEditTarget(null); };
@@ -425,12 +399,12 @@ const TaskGraphComponent = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => {
       menu.addItem((item) => item.setTitle('Add Note').setIcon('sticky-note').onClick(async () => {
           const bounds = (event.target as HTMLElement).getBoundingClientRect(); const position = reactFlowInstance.project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
           const newNode = { id: `text-${Date.now()}`, text: 'New Note', x: position.x, y: position.y };
-          const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = [...(board.data.textNodes || []), newNode]; await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey((prev: number) => prev + 1); }
+          const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = [...(board.data.textNodes || []), newNode]; await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey(prev => prev + 1); }
       }));
       menu.showAtPosition({ x: event.nativeEvent.clientX, y: event.nativeEvent.clientY });
   }, [plugin, activeBoardId, reactFlowInstance]);
 
-  const onEdgeContextMenu = React.useCallback((event: React.MouseEvent, edge: Edge) => { event.preventDefault(); event.stopPropagation(); setEdges((eds: Edge[]) => { const newEdges = eds.filter((e) => e.id !== edge.id); plugin.saveBoardData(activeBoardId, { edges: newEdges }); return newEdges; }); new Notice("Connection removed"); }, [plugin, activeBoardId, setEdges]);
+  const onEdgeContextMenu = React.useCallback((event: React.MouseEvent, edge: Edge) => { event.preventDefault(); event.stopPropagation(); setEdges((eds) => { const newEdges = eds.filter((e) => e.id !== edge.id); plugin.saveBoardData(activeBoardId, { edges: newEdges }); return newEdges; }); new Notice("Connection removed"); }, [plugin, activeBoardId, setEdges]);
   
   const onNodeContextMenu = React.useCallback((event: React.MouseEvent, node: Node) => {
       event.preventDefault(); event.stopPropagation(); const menu = new Menu();
@@ -441,168 +415,320 @@ const TaskGraphComponent = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => {
           menu.addItem((item) => item.setTitle('🔴 Blocked').onClick(() => updateNodeStatus(node.id, 'blocked')));
           menu.addItem((item) => item.setTitle('🟣 Finished').onClick(() => updateNodeStatus(node.id, 'finished')));
       } else if (node.type === 'text') {
-          menu.addItem((item) => item.setTitle('🗑 Delete Note').onClick(async () => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = board.data.textNodes.filter(tn => tn.id !== node.id); await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey((prev: number) => prev + 1); } }));
+          menu.addItem((item) => item.setTitle('🗑 Delete Note').onClick(async () => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = board.data.textNodes.filter(tn => tn.id !== node.id); await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey(prev => prev + 1); } }));
       }
       menu.showAtPosition({ x: event.nativeEvent.clientX, y: event.nativeEvent.clientY });
   }, [plugin, activeBoardId, nodes]);
 
   const handleSwitchBoard = (id: string) => { setActiveBoardId(id); plugin.settings.lastActiveBoardId = id; plugin.saveSettings(); };
   const handleAddBoard = async () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'] }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
-  const handleDeleteBoard = async (id: string) => { const newBoards = plugin.settings.boards.filter(b => b.id !== id); plugin.settings.boards = newBoards; const nextBoard = newBoards[0];
-    if (nextBoard) {
-        setActiveBoardId(nextBoard.id); 
-        plugin.settings.lastActiveBoardId = nextBoard.id; 
-    } else {
-        setActiveBoardId('default'); // 兜底
-    } await plugin.saveSettings(); };
-  const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey((prev: number) => prev + 1); };
-  const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey((prev: number) => prev + 1); };
   
-  // 🌟 修复后的核心算法：自然继承无引力排版
+  const handleDeleteBoard = async (id: string) => { 
+      const newBoards = plugin.settings.boards.filter(b => b.id !== id); 
+      plugin.settings.boards = newBoards; 
+      const nextBoard = newBoards[0]; 
+      if (nextBoard) {
+          setActiveBoardId(nextBoard.id); 
+          plugin.settings.lastActiveBoardId = nextBoard.id; 
+          await plugin.saveSettings(); 
+      }
+  };
+  
+  const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
+  const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
+  
+  // 🌟 终极双向重心排版引擎：防重叠、父节点居中对齐、绝对收敛
   const handleAutoLayout = async () => {
-      const adjacency: Record<string, string[]> = {}; 
+      const undirectedAdj: Record<string, string[]> = {};
+      const directedAdj: Record<string, string[]> = {}; 
       const parents: Record<string, string[]> = {}; 
-      const connectedNodeIds = new Set<string>();
+      const inDegree: Record<string, number> = {};
 
-      nodes.forEach(n => { adjacency[n.id] = []; parents[n.id] = []; });
-      edges.forEach(e => { 
-          if (adjacency[e.source]) adjacency[e.source]!.push(e.target);
-          if (parents[e.target]) parents[e.target]!.push(e.source);
-          connectedNodeIds.add(e.source);
-          connectedNodeIds.add(e.target);
+      nodes.forEach(n => { 
+          undirectedAdj[n.id] = []; 
+          directedAdj[n.id] = []; 
+          parents[n.id] = []; 
+          inDegree[n.id] = 0;
       });
 
-      const connectedTaskIds: string[] = []; 
+      edges.forEach(e => { 
+          directedAdj[e.source]?.push(e.target); 
+          parents[e.target]?.push(e.source); 
+          inDegree[e.target] = (inDegree[e.target] ?? 0) + 1;
+          undirectedAdj[e.source]?.push(e.target);
+          undirectedAdj[e.target]?.push(e.source);
+      });
+
+      const connectedNodeIds = new Set<string>();
       const isolatedActiveIds: string[] = [];
       const isolatedFinishedIds: string[] = [];
 
       nodes.forEach(n => { 
-          if (n.type !== 'task') return; 
-          const isFinished = n.data.status === 'x' || n.data.customStatus === 'finished'; 
-          const isConnected = connectedNodeIds.has(n.id);
+          const isFinishedTask = n.type === 'task' && (n.data.status === 'x' || n.data.customStatus === 'finished'); 
+          const isConnected = (undirectedAdj[n.id]?.length ?? 0) > 0;
           
-          if (isConnected) connectedTaskIds.push(n.id);
-          else if (isFinished) isolatedFinishedIds.push(n.id);
-          else isolatedActiveIds.push(n.id);
+          if (isConnected) {
+              connectedNodeIds.add(n.id);
+          } else if (isFinishedTask) {
+              isolatedFinishedIds.push(n.id);
+          } else {
+              isolatedActiveIds.push(n.id);
+          }
       });
 
       const layout: Record<string, {x: number, y: number}> = {}; 
-      const COL_WIDTH = 400; const ROW_HEIGHT = 280;
+      const COL_WIDTH = 380; 
+      // 🌟 核心提升 1：行高增至 240px，彻底告别任务卡片重叠！
+      const ROW_HEIGHT = 240; 
+      const COMPONENT_PADDING = 120; 
 
-      // 1. 已连接的任务 (拓扑分层排版 - 修复漂移Bug)
-      if (connectedTaskIds.length > 0) {
-          const levels: Record<string, number> = {};
-          connectedTaskIds.forEach(id => levels[id] = 0);
+      const components: string[][] = [];
+      const visited = new Set<string>();
+      
+      connectedNodeIds.forEach(id => {
+          if (!visited.has(id)) {
+              const comp: string[] = [];
+              const queue = [id];
+              visited.add(id);
+              while(queue.length > 0) {
+                  const curr = queue.shift();
+                  if (curr === undefined) continue;
+                  comp.push(curr);
+                  undirectedAdj[curr]?.forEach(neighbor => {
+                      if (!visited.has(neighbor)) {
+                          visited.add(neighbor);
+                          queue.push(neighbor);
+                      }
+                  });
+              }
+              components.push(comp);
+          }
+      });
+
+      const componentLayouts: { comp: string[], cMinY: number, cMaxY: number, layout: Record<string, {x: number, y: number}>, manualY: number }[] = [];
+
+      components.forEach(comp => {
+          const compLevels: Record<string, number> = {};
+          comp.forEach(id => compLevels[id] = 0);
           let changed = true; let iter = 0;
           while (changed && iter < 100) {
               changed = false;
               edges.forEach(e => {
-                  if (levels[e.source] !== undefined && levels[e.target] !== undefined) {
-                      if (levels[e.target]! <= levels[e.source]!) { 
-                          levels[e.target] = levels[e.source]! + 1; changed = true;
+                  const targetLvl = compLevels[e.target];
+                  const sourceLvl = compLevels[e.source];
+                  if (targetLvl !== undefined && sourceLvl !== undefined) {
+                      if (targetLvl <= sourceLvl) { 
+                          compLevels[e.target] = sourceLvl + 1; changed = true;
                       }
                   }
               });
               iter++;
           }
 
-          const levelGroups: Record<number, string[]> = {};
+          const compLevelGroups: Record<number, string[]> = {};
           let maxLevel = 0;
-          connectedTaskIds.forEach(id => {
-              const lvl = levels[id];
-              if (lvl !== undefined) {
-                maxLevel = Math.max(maxLevel, lvl);
-                if (!levelGroups[lvl]) levelGroups[lvl] = [];
-                levelGroups[lvl]!.push(id);
-            }
+          comp.forEach(id => {
+              const lvl = compLevels[id] ?? 0; 
+              maxLevel = Math.max(maxLevel, lvl); 
+              if (!compLevelGroups[lvl]) compLevelGroups[lvl] = [];
+              compLevelGroups[lvl]?.push(id); 
           });
 
+          const cLayout: Record<string, {x: number, y: number}> = {};
+          
+          // 🌟 核心提升 2a：正向扫描（排布子节点，杜绝重叠）
           for (let lvl = 0; lvl <= maxLevel; lvl++) {
-              const currentNodes = levelGroups[lvl] || [];
-              const nodeWithY = currentNodes.map(nodeId => {
-                  const nodeParents = parents[nodeId] || [];
-                  let avgY = 0; let count = 0;
-                  nodeParents.forEach(p => { if (layout[p]) { avgY += layout[p].y; count++; } });
-                  
-                  const currNode = nodes.find(n => n.id === nodeId);
-                  const manualY = currNode ? currNode.position.y : 0;
-                  
-                  // 完全继承父节点Y，或继承自己的手动Y
-                  return { id: nodeId, desiredY: count > 0 ? avgY / count : manualY };
+              const currentNodes = compLevelGroups[lvl] || [];
+              
+              currentNodes.sort((a, b) => {
+                  const nA = nodes.find(n => n.id === a);
+                  const nB = nodes.find(n => n.id === b);
+                  return (nA?.position.y ?? 0) - (nB?.position.y ?? 0);
               });
               
-              nodeWithY.sort((a, b) => a.desiredY - b.desiredY);
-              
               let currentY = -Infinity;
-              nodeWithY.forEach((item, idx) => {
-                  let assignedY;
-                  if (idx === 0) {
-                      // 第一个节点绝对处于其期望位置，没有任何拉扯
-                      assignedY = item.desiredY;
+              currentNodes.forEach((nodeId) => {
+                  let desiredY = 0;
+                  if (lvl > 0) {
+                      const nodeParents = parents[nodeId] || [];
+                      let sum = 0; let count = 0;
+                      nodeParents.forEach(p => { 
+                          const pPos = cLayout[p];
+                          if (pPos) { sum += pPos.y; count++; } 
+                      });
+                      // 子节点期望排在父节点的正右方
+                      desiredY = count > 0 ? sum / count : (currentY === -Infinity ? 0 : currentY + ROW_HEIGHT);
                   } else {
-                      // 🔥 修复点：移除 maxAllowed。只在发生碰撞时向下推开，否则保持在 desiredY。
-                      // 这样平行的多条串行分支将各自停留在自己原本设定的高度，互不干扰！
-                      const minAllowed = currentY + ROW_HEIGHT;
-                      assignedY = Math.max(minAllowed, item.desiredY);
+                      // 根节点初始按顺序排布
+                      desiredY = currentY === -Infinity ? 0 : currentY + ROW_HEIGHT;
                   }
-                  layout[item.id] = { x: lvl * COL_WIDTH, y: assignedY };
+                  
+                  // 强制分配在不重叠的网格上
+                  let assignedY = currentY === -Infinity ? desiredY : Math.max(currentY + ROW_HEIGHT, desiredY);
+                  cLayout[nodeId] = { x: lvl * COL_WIDTH, y: assignedY };
+                  currentY = assignedY; 
+              });
+          }
+
+          // 🌟 核心提升 2b：反向扫描 / 重心算法（拉下文本框/父节点，使其居中对齐）
+          for (let lvl = maxLevel - 1; lvl >= 0; lvl--) {
+              const currentNodes = compLevelGroups[lvl] || [];
+              
+              const nodeWithDesired = currentNodes.map(nodeId => {
+                  const nodeChildren = directedAdj[nodeId] || [];
+                  let sum = 0; let count = 0;
+                  nodeChildren.forEach(child => {
+                      const cPos = cLayout[child];
+                      if (cPos) { sum += cPos.y; count++; }
+                  });
+                  
+                  // 如果有子节点，父节点必须对齐到所有子节点的正中间！
+                  const currentPos = cLayout[nodeId];
+                  const desiredY = count > 0 ? sum / count : (currentPos ? currentPos.y : 0);
+                  return { id: nodeId, desiredY };
+              });
+
+              nodeWithDesired.sort((a, b) => a.desiredY - b.desiredY);
+
+              let currentY = -Infinity;
+              nodeWithDesired.forEach(item => {
+                  let assignedY = currentY === -Infinity ? item.desiredY : Math.max(currentY + ROW_HEIGHT, item.desiredY);
+                  const pos = cLayout[item.id];
+                  if (pos) pos.y = assignedY;
                   currentY = assignedY;
               });
           }
-      }
 
-      let maxY = 0; 
-      Object.values(layout).forEach(pos => { if(pos.y > maxY) maxY = pos.y; }); 
+          const cMinY = Math.min(...Object.values(cLayout).map(p => p.y));
+          const cMaxY = Math.max(...Object.values(cLayout).map(p => p.y));
+          
+          // 获取该组件当前的实际显示高度（锚点），用于决定这个分支在整个画布中的上下顺序
+          const manualCompMinY = Math.min(...comp.map(id => nodes.find(n => n.id === id)?.position.y ?? 0));
 
-      // 2. 未连接的活跃任务
+          componentLayouts.push({ comp, layout: cLayout, cMinY, cMaxY, manualY: manualCompMinY });
+      });
+
+      // 🌟 核心提升 3：全局绝对堆叠（俄罗斯方块）。
+      // 按照用户摆放的上下顺序排列，然后消除一切不必要的巨大空白！
+      componentLayouts.sort((a, b) => a.manualY - b.manualY);
+      
+      let globalBottom = 0;
+      componentLayouts.forEach((c, index) => {
+          let shiftY = 0;
+          if (index === 0) {
+              // 第一个组件直接贴在 0 的位置（或者贴在它原本的位置）
+              shiftY = c.manualY - c.cMinY;
+              globalBottom = c.manualY + (c.cMaxY - c.cMinY) + COMPONENT_PADDING;
+          } else {
+              // 后续组件无条件贴在上方组件的底部，消除无限拉扯！
+              shiftY = globalBottom - c.cMinY;
+              globalBottom += (c.cMaxY - c.cMinY) + COMPONENT_PADDING;
+          }
+          
+          c.comp.forEach(id => {
+              const pos = c.layout[id];
+              if (pos !== undefined) {
+                  layout[id] = { x: pos.x, y: pos.y + shiftY };
+              }
+          });
+      });
+
+      let maxY = globalBottom;
+
+      // 🌟 核心提升 4：活跃孤岛任务紧凑网格
       if (isolatedActiveIds.length > 0) {
-          let startY = Object.keys(layout).length > 0 ? maxY + ROW_HEIGHT * 1.5 : 0;
+          let startY = maxY;
           const ISOLATED_COLS = 3;
+          // 减小行高让孤岛任务更紧凑
+          const ISO_ROW_HEIGHT = ROW_HEIGHT * 0.8; 
 
-          const sortedActive = isolatedActiveIds.map(id => {
-              const n = nodes.find(n => n.id === id);
-              return { id, y: n?.position.y || 0, x: n?.position.x || 0 };
-          }).sort((a, b) => (a.y - b.y) || (a.x - b.x));
+          const sortedActive = isolatedActiveIds.sort((a, b) => {
+              const nA = nodes.find(n => n.id === a);
+              const nB = nodes.find(n => n.id === b);
+              return (nA?.position.y ?? 0) - (nB?.position.y ?? 0);
+          });
 
           sortedActive.forEach((item, idx) => {
               const row = Math.floor(idx / ISOLATED_COLS);
               const col = idx % ISOLATED_COLS;
-              layout[item.id] = { x: col * COL_WIDTH, y: startY + row * ROW_HEIGHT };
+              layout[item] = { x: col * COL_WIDTH, y: startY + row * ISO_ROW_HEIGHT };
           });
 
           const maxRow = Math.floor((sortedActive.length - 1) / ISOLATED_COLS);
-          maxY = startY + maxRow * ROW_HEIGHT;
+          maxY = startY + (maxRow + 1) * ISO_ROW_HEIGHT + COMPONENT_PADDING;
       }
       
-      // 3. 历史孤岛沉底
+      // 🌟 核心提升 5：已完成孤岛任务沉底网格
       if (isolatedFinishedIds.length > 0) {
-          let startY = (Object.keys(layout).length > 0) ? maxY + ROW_HEIGHT * 1.5 : 0;
+          let startY = maxY;
           const FINISHED_COLS = 4;
+          // 已完成任务不需要太大空间，进一步压缩行高
+          const FINISHED_ROW_HEIGHT = ROW_HEIGHT * 0.6; 
           
-          const sortedFinished = isolatedFinishedIds.map(id => {
-              const n = nodes.find(n => n.id === id);
-              return { id, y: n?.position.y || 0, x: n?.position.x || 0 };
-          }).sort((a, b) => (a.y - b.y) || (a.x - b.x));
+          const sortedFinished = isolatedFinishedIds.sort((a, b) => {
+              const nA = nodes.find(n => n.id === a);
+              const nB = nodes.find(n => n.id === b);
+              return (nA?.position.y ?? 0) - (nB?.position.y ?? 0);
+          });
 
           sortedFinished.forEach((item, idx) => { 
               const row = Math.floor(idx / FINISHED_COLS); 
               const col = idx % FINISHED_COLS; 
-              layout[item.id] = { x: col * COL_WIDTH, y: startY + row * (ROW_HEIGHT * 0.6) }; 
+              layout[item] = { x: col * COL_WIDTH, y: startY + row * FINISHED_ROW_HEIGHT }; 
           });
       }
 
-      setNodes((nds: Node[]) => nds.map((n: Node) =>({ ...n, position: layout[n.id] || n.position }))); 
+      setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] ?? n.position }))); 
       
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (board) {
-         const mergedLayout = { ...board.data.layout, ...layout };
-         await plugin.saveBoardData(activeBoardId, { layout: mergedLayout }); 
+         // 严格 TS 类型检查守护
+         const mergedLayout = { ...board.data.layout };
+         const updatedTextNodes = board.data.textNodes.map(tn => ({ ...tn }));
+
+         Object.keys(layout).forEach(nodeId => {
+             const node = nodes.find(n => n.id === nodeId);
+             const newPos = layout[nodeId];
+             
+             if (newPos !== undefined) {
+                 if (node?.type === 'task') {
+                     mergedLayout[nodeId] = newPos;
+                 } else if (node?.type === 'text') {
+                     const tnIndex = updatedTextNodes.findIndex(tn => tn.id === nodeId);
+                     if (tnIndex > -1) {
+                         const textNodeToUpdate = updatedTextNodes[tnIndex];
+                         if (textNodeToUpdate !== undefined) {
+                             textNodeToUpdate.x = newPos.x;
+                             textNodeToUpdate.y = newPos.y;
+                         }
+                     }
+                 }
+             }
+         });
+
+         await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes }); 
       }
       new Notice("Smart layout applied!"); 
   };
 
-  const handleResetView = async () => { if (!window.confirm("Clear all positions?")) return; await plugin.saveBoardData(activeBoardId, { layout: {} }); setRefreshKey((prev: number) => prev + 1); new Notice("View reset."); };
-  const handleSidebarClick = (nodeId: string) => { const node = nodes.find(n => n.id === nodeId); if (node) { reactFlowInstance.setCenter(node.position.x + 120, node.position.y + 60, { zoom: 1.2, duration: 800 }); setNodes((nds: Node[]) => nds.map((n: Node) =>({ ...n, selected: n.id === nodeId }))); } };
+  const handleResetView = async () => { 
+      if (!window.confirm("Clear all positions?")) return; 
+      
+      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
+      if (board) {
+          const newLayout = {};
+          const newTextNodes = board.data.textNodes.map((tn, index) => ({
+              ...tn,
+              x: (index % 3) * 320,
+              y: Math.floor(index / 3) * 200
+          }));
+          await plugin.saveBoardData(activeBoardId, { layout: newLayout, textNodes: newTextNodes }); 
+          setRefreshKey(prev => prev + 1); 
+          new Notice("View reset."); 
+      }
+  };
+  
+  const handleSidebarClick = (nodeId: string) => { const node = nodes.find(n => n.id === nodeId); if (node) { reactFlowInstance.setCenter(node.position.x + 120, node.position.y + 60, { zoom: 1.2, duration: 800 }); setNodes(nds => nds.map(n => ({ ...n, selected: n.id === nodeId }))); } };
 
   return (
     <div className="task-graph-container" onContextMenu={onPaneContextMenu}>
@@ -642,23 +768,19 @@ const TaskGraphComponent = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => {
   );
 };
 
-const TaskGraphWithProvider = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => { return ( <ReactFlowProvider> <TaskGraphComponent plugin={plugin} /> </ReactFlowProvider> ); };
+const TaskGraphWithProvider = ({ plugin }: { plugin: TaskGraphPlugin }) => { return ( <ReactFlowProvider> <TaskGraphComponent plugin={plugin} /> </ReactFlowProvider> ); };
 export class TaskGraphView extends ItemView {
-  plugin: SpatialTaskGraphPlugin; root: Root | null = null;
-  constructor(leaf: WorkspaceLeaf, plugin: SpatialTaskGraphPlugin) { super(leaf); this.plugin = plugin; }
+  plugin: TaskGraphPlugin; root: Root | null = null;
+  constructor(leaf: WorkspaceLeaf, plugin: TaskGraphPlugin) { super(leaf); this.plugin = plugin; }
   getViewType() { return VIEW_TYPE_TASK_GRAPH; } getDisplayText() { return "Spatial Task Graph"; } getIcon() { return "network"; }
-  async onOpen() {
-    const container = this.contentEl; // 更稳健的写法
-    container.empty();
-    container.addClass('spatial-task-graph-root'); // 增加类名方便调试
-    
-    this.root = createRoot(container);
-    this.root.render(
-        <React.StrictMode>
-            <TaskGraphWithProvider plugin={this.plugin} />
-        </React.StrictMode>
-    );
-    }
+  async onOpen() { 
+      const container = this.containerEl.children[1] as HTMLElement; 
+      if (!container) return;
+      container.empty(); 
+      container.setAttr('style', 'height: 100%; width: 100%; overflow: hidden;'); 
+      this.root = createRoot(container); 
+      this.root.render(<React.StrictMode><TaskGraphWithProvider plugin={this.plugin} /></React.StrictMode>); 
+  }
   refresh() { if (this.plugin.viewRefresh) this.plugin.viewRefresh(); }
   async onClose() { this.root?.unmount(); }
 }
