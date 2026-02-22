@@ -19,6 +19,7 @@ import ReactFlow, {
   OnConnectStart,
   OnConnectEnd
 } from 'reactflow';
+import 'reactflow/dist/style.css'; 
 
 import TaskGraphPlugin, { GraphBoard } from './main';
 
@@ -42,7 +43,6 @@ const REACT_FLOW_CORE_STYLES = `
     .react-flow__handle{position:absolute;pointer-events:all;min-width:5px;min-height:5px;width:6px;height:6px;background:#555;border:1px solid #fff;border-radius:100%;z-index:1}
     .react-flow__minimap{z-index:5}
     .react-flow__panel{z-index:10; position:absolute; pointer-events:none;}
-    
     .react-flow__selection { background: rgba(var(--interactive-accent-rgb), 0.1); border: 1px solid var(--interactive-accent); border-radius: 6px; }
 `;
 
@@ -110,7 +110,7 @@ const CUSTOM_STYLES = `
 const STATUS_COLORS = { 'in_progress': '#34c759', 'pending': '#ff9500', 'finished': '#af52de', 'blocked': '#ff3b30', 'backlog': '#8e8e93', 'default': 'var(--text-muted)' };
 const extractTags = (text: string) => { if (!text) return { tags: [], cleanText: '' }; const tagRegex = /#[\w\u4e00-\u9fa5]+(\/[\w\u4e00-\u9fa5]+)*/g; const tags = text.match(tagRegex) || []; const cleanText = text.replace(tagRegex, '').trim(); return { tags, cleanText }; };
 
-// 🌟 性能优化：使用 React.memo 包裹节点，防止拖拽时引发全局渲染重绘，彻底解决卡顿！
+// --- 组件：任务节点 (通过 React.memo 避免拖拽卡顿) ---
 const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
   const { tags, cleanText } = extractTags(data.label);
   const statusColor = STATUS_COLORS[data.customStatus as keyof typeof STATUS_COLORS] || STATUS_COLORS['default'];
@@ -143,7 +143,6 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
   );
 });
 
-// 🌟 性能优化：React.memo
 const TextNode = React.memo(({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
     const [text, setText] = React.useState(data.label);
     const handleBlur = () => { if (text !== data.label) data.onSave(data.id, text); };
@@ -276,8 +275,10 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 
   const activeBoard = plugin.settings.boards.find(b => b.id === activeBoardId) || plugin.settings.boards[0];
 
-  React.useEffect(() => { // @ts-ignore
-      plugin.viewRefresh = () => setRefreshKey(prev => prev + 1); }, []);
+  React.useEffect(() => { 
+      // @ts-ignore
+      plugin.viewRefresh = () => setRefreshKey(prev => prev + 1); 
+  }, []);
 
   React.useEffect(() => {
     const loadData = async () => {
@@ -358,19 +359,18 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       if (newId) {
           const parentNode = nodes.find(n => n.id === createTarget.sourceNodeId);
           let newX = 0, newY = 0; if (parentNode) { newX = parentNode.position.x + 400; newY = parentNode.position.y; }
-          const newEdge = { id: `e${createTarget.sourceNodeId}-${newId}`, source: createTarget.sourceNodeId, target: newId, animated: true }; // 默认使用 defaultEdgeOptions
+          const newEdge = { id: `e${createTarget.sourceNodeId}-${newId}`, source: createTarget.sourceNodeId, target: newId, animated: true };
           const board = plugin.settings.boards.find(b => b.id === activeBoardId);
           if (board) { board.data.edges = [...board.data.edges, newEdge]; board.data.layout = { ...board.data.layout, [newId]: { x: newX, y: newY } }; await plugin.saveSettings(); }
           setCreateTarget(null); setRefreshKey(prev => prev + 1);
       }
   };
 
-  // 🌟 核心升级：连线时自动注入 Block ID，保证连接物理锁定不丢失！
   const onConnect = React.useCallback(async (params: Connection) => { 
       connectionMadeRef.current = true; 
-      
       if (!params.source || !params.target) return;
-      // 瞬间为源节点和目标节点注入 Block ID（如果它们还没有的话），并返回最终绝对稳定的 ID
+
+      // 乐观 UI 解决幽灵连线
       const newSourceId = await plugin.ensureBlockId(activeBoardId, params.source);
       const newTargetId = await plugin.ensureBlockId(activeBoardId, params.target);
 
@@ -381,17 +381,31 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           animated: true 
       };
 
-      setEdges((eds) => addEdge(newEdge, eds)); 
+      setNodes(nds => nds.map(n => {
+          if (n.id === params.source) return { ...n, id: newSourceId };
+          if (n.id === params.target) return { ...n, id: newTargetId };
+          return n;
+      }));
+
+      setEdges((eds) => {
+          const updatedEds = eds.map(e => {
+              let eSource = e.source === params.source ? newSourceId : (e.source === params.target ? newTargetId : e.source);
+              let eTarget = e.target === params.source ? newSourceId : (e.target === params.target ? newTargetId : e.target);
+              return { ...e, source: eSource, target: eTarget, id: `e${eSource}-${eTarget}` };
+          });
+          return addEdge(newEdge, updatedEds);
+      }); 
       
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (board) { 
-          board.data.edges.push(newEdge);
+          if (!board.data.edges.some((e:any) => e.id === newEdge.id)) {
+              board.data.edges.push(newEdge);
+          }
           await plugin.saveSettings(); 
       }
       
-      // 触发视图刷新，确保节点使用全新的 Block ID 重新渲染
       setRefreshKey(prev => prev + 1);
-  }, [plugin, activeBoardId, setEdges]);
+  }, [plugin, activeBoardId, setEdges, setNodes]);
 
   const onNodeDragStop = React.useCallback((event: any, node: Node) => { setNodes((nds) => nds.map(n => n.id === node.id ? node : n)); const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(!board) return; if (node.type === 'task') { const layout = { ...board.data.layout, [node.id]: node.position }; plugin.saveBoardData(activeBoardId, { layout }); } else if (node.type === 'text') { const textNodes = board.data.textNodes.map(tn => tn.id === node.id ? { ...tn, x: node.position.x, y: node.position.y } : tn); plugin.saveBoardData(activeBoardId, { textNodes }); } }, [plugin, activeBoardId, setNodes]);
   const handleSaveTextNode = async (id: string, text: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(board) { const textNodes = board.data.textNodes.map(tn => tn.id === id ? { ...tn, text } : tn); await plugin.saveBoardData(activeBoardId, { textNodes }); } };
@@ -430,94 +444,135 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
   const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
   
-  // 🌟 孤岛任务沉底算法升级：把无连线且已完成的任务扫到最下方紧凑排列，不再干扰视线
+  // 🌟 修复后的核心算法：自然继承无引力排版
   const handleAutoLayout = async () => {
       const adjacency: Record<string, string[]> = {}; 
       const parents: Record<string, string[]> = {}; 
-      const inDegree: Record<string, number> = {}; 
+      const connectedNodeIds = new Set<string>();
 
-      nodes.forEach(n => { adjacency[n.id] = []; parents[n.id] = []; inDegree[n.id] = 0; });
+      nodes.forEach(n => { adjacency[n.id] = []; parents[n.id] = []; });
       edges.forEach(e => { 
           if (adjacency[e.source]) adjacency[e.source].push(e.target); 
           if (parents[e.target]) parents[e.target].push(e.source); 
-          if (inDegree[e.target] !== undefined) inDegree[e.target]++;
+          connectedNodeIds.add(e.source);
+          connectedNodeIds.add(e.target);
       });
 
-      const mainNodes: string[] = []; 
-      const orphanFinishedNodes: string[] = [];
+      const connectedTaskIds: string[] = []; 
+      const isolatedActiveIds: string[] = [];
+      const isolatedFinishedIds: string[] = [];
 
       nodes.forEach(n => { 
           if (n.type !== 'task') return; 
           const isFinished = n.data.status === 'x' || n.data.customStatus === 'finished'; 
-          const isOrphan = inDegree[n.id] === 0 && adjacency[n.id].length === 0; 
+          const isConnected = connectedNodeIds.has(n.id);
           
-          if (isFinished && isOrphan) { 
-              orphanFinishedNodes.push(n.id); // 确认为孤岛完成节点
-          } else { 
-              mainNodes.push(n.id); 
-          } 
+          if (isConnected) connectedTaskIds.push(n.id);
+          else if (isFinished) isolatedFinishedIds.push(n.id);
+          else isolatedActiveIds.push(n.id);
       });
 
       const layout: Record<string, {x: number, y: number}> = {}; 
       const COL_WIDTH = 400; const ROW_HEIGHT = 280;
 
-      // 1. Main Nodes 算法...
-      const levels: Record<string, number> = {};
-      mainNodes.forEach(id => levels[id] = 0);
-      let changed = true; let iter = 0;
-      while (changed && iter < mainNodes.length) {
-          changed = false;
-          edges.forEach(e => {
-              if (levels[e.source] !== undefined && levels[e.target] !== undefined) {
-                  if (levels[e.target] <= levels[e.source]) { 
-                      levels[e.target] = levels[e.source] + 1;
-                      changed = true;
+      // 1. 已连接的任务 (拓扑分层排版 - 修复漂移Bug)
+      if (connectedTaskIds.length > 0) {
+          const levels: Record<string, number> = {};
+          connectedTaskIds.forEach(id => levels[id] = 0);
+          let changed = true; let iter = 0;
+          while (changed && iter < 100) {
+              changed = false;
+              edges.forEach(e => {
+                  if (levels[e.source] !== undefined && levels[e.target] !== undefined) {
+                      if (levels[e.target] <= levels[e.source]) { 
+                          levels[e.target] = levels[e.source] + 1; changed = true;
+                      }
                   }
-              }
+              });
+              iter++;
+          }
+
+          const levelGroups: Record<number, string[]> = {};
+          let maxLevel = 0;
+          connectedTaskIds.forEach(id => {
+              const lvl = levels[id]; maxLevel = Math.max(maxLevel, lvl);
+              if (!levelGroups[lvl]) levelGroups[lvl] = [];
+              levelGroups[lvl].push(id);
           });
-          iter++;
+
+          for (let lvl = 0; lvl <= maxLevel; lvl++) {
+              const currentNodes = levelGroups[lvl] || [];
+              const nodeWithY = currentNodes.map(nodeId => {
+                  const nodeParents = parents[nodeId] || [];
+                  let avgY = 0; let count = 0;
+                  nodeParents.forEach(p => { if (layout[p]) { avgY += layout[p].y; count++; } });
+                  
+                  const currNode = nodes.find(n => n.id === nodeId);
+                  const manualY = currNode ? currNode.position.y : 0;
+                  
+                  // 完全继承父节点Y，或继承自己的手动Y
+                  return { id: nodeId, desiredY: count > 0 ? avgY / count : manualY };
+              });
+              
+              nodeWithY.sort((a, b) => a.desiredY - b.desiredY);
+              
+              let currentY = -Infinity;
+              nodeWithY.forEach((item, idx) => {
+                  let assignedY;
+                  if (idx === 0) {
+                      // 第一个节点绝对处于其期望位置，没有任何拉扯
+                      assignedY = item.desiredY;
+                  } else {
+                      // 🔥 修复点：移除 maxAllowed。只在发生碰撞时向下推开，否则保持在 desiredY。
+                      // 这样平行的多条串行分支将各自停留在自己原本设定的高度，互不干扰！
+                      const minAllowed = currentY + ROW_HEIGHT;
+                      assignedY = Math.max(minAllowed, item.desiredY);
+                  }
+                  layout[item.id] = { x: lvl * COL_WIDTH, y: assignedY };
+                  currentY = assignedY;
+              });
+          }
       }
 
-      const levelGroups: Record<number, string[]> = {};
-      let maxLevel = 0;
-      mainNodes.forEach(id => {
-          const lvl = levels[id];
-          maxLevel = Math.max(maxLevel, lvl);
-          if (!levelGroups[lvl]) levelGroups[lvl] = [];
-          levelGroups[lvl].push(id);
-      });
-
-      for (let lvl = 0; lvl <= maxLevel; lvl++) {
-          const currentNodes = levelGroups[lvl] || [];
-          const nodeWithY = currentNodes.map(nodeId => {
-              const nodeParents = parents[nodeId] || [];
-              let avgY = 0; let count = 0;
-              nodeParents.forEach(p => { if (layout[p]) { avgY += layout[p].y; count++; } });
-              return { id: nodeId, desiredY: count > 0 ? avgY / count : 0 };
-          });
-          nodeWithY.sort((a, b) => a.desiredY - b.desiredY);
-          
-          let currentY = 0;
-          nodeWithY.forEach(item => {
-              let y = Math.max(currentY, item.desiredY);
-              layout[item.id] = { x: lvl * COL_WIDTH, y: y };
-              currentY = y + ROW_HEIGHT;
-          });
-      }
-
-      // 2. 🌟 孤岛节点沉底逻辑：在下方更紧凑地矩阵排列
       let maxY = 0; 
       Object.values(layout).forEach(pos => { if(pos.y > maxY) maxY = pos.y; }); 
+
+      // 2. 未连接的活跃任务
+      if (isolatedActiveIds.length > 0) {
+          let startY = Object.keys(layout).length > 0 ? maxY + ROW_HEIGHT * 1.5 : 0;
+          const ISOLATED_COLS = 3;
+
+          const sortedActive = isolatedActiveIds.map(id => {
+              const n = nodes.find(n => n.id === id);
+              return { id, y: n?.position.y || 0, x: n?.position.x || 0 };
+          }).sort((a, b) => (a.y - b.y) || (a.x - b.x));
+
+          sortedActive.forEach((item, idx) => {
+              const row = Math.floor(idx / ISOLATED_COLS);
+              const col = idx % ISOLATED_COLS;
+              layout[item.id] = { x: col * COL_WIDTH, y: startY + row * ROW_HEIGHT };
+          });
+
+          const maxRow = Math.floor((sortedActive.length - 1) / ISOLATED_COLS);
+          maxY = startY + maxRow * ROW_HEIGHT;
+      }
       
-      const START_Y_FOR_FINISHED = maxY + ROW_HEIGHT * 1.5; // 空出明显间隔
-      const ORPHAN_COL_COUNT = 4; // 每行放4个
-      
-      orphanFinishedNodes.forEach((id, idx) => { 
-          const row = Math.floor(idx / ORPHAN_COL_COUNT); 
-          const col = idx % ORPHAN_COL_COUNT; 
-          // 垂直间距减半（140px），因为它们不需要连线空间
-          layout[id] = { x: col * COL_WIDTH, y: START_Y_FOR_FINISHED + (row * (ROW_HEIGHT * 0.5)) }; 
-      });
+      // 3. 历史孤岛沉底
+      if (isolatedFinishedIds.length > 0) {
+          let startY = (Object.keys(layout).length > 0) ? maxY + ROW_HEIGHT * 1.5 : 0;
+          const FINISHED_COLS = 4;
+          
+          const sortedFinished = isolatedFinishedIds.map(id => {
+              const n = nodes.find(n => n.id === id);
+              return { id, y: n?.position.y || 0, x: n?.position.x || 0 };
+          }).sort((a, b) => (a.y - b.y) || (a.x - b.x));
+
+          sortedFinished.forEach((item, idx) => { 
+              const row = Math.floor(idx / FINISHED_COLS); 
+              const col = idx % FINISHED_COLS; 
+              layout[item.id] = { x: col * COL_WIDTH, y: startY + row * (ROW_HEIGHT * 0.6) }; 
+          });
+      }
 
       setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] || n.position }))); 
       
