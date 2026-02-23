@@ -437,36 +437,38 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
   const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
   
-  // 🌟 终极双向重心排版引擎：防重叠、父节点居中对齐、绝对收敛
+  // 🌟 终极排版引擎：逆向重心推演 + 物理碰撞检测，杜绝无限膨胀与父节点飘逸
   const handleAutoLayout = async () => {
+      // --- 1. 构建图结构 ---
       const undirectedAdj: Record<string, string[]> = {};
-      const directedAdj: Record<string, string[]> = {}; 
-      const parents: Record<string, string[]> = {}; 
+      const directedAdj: Record<string, string[]> = {};
       const inDegree: Record<string, number> = {};
 
-      nodes.forEach(n => { 
-          undirectedAdj[n.id] = []; 
-          directedAdj[n.id] = []; 
-          parents[n.id] = []; 
+      nodes.forEach(n => {
+          undirectedAdj[n.id] = [];
+          directedAdj[n.id] = [];
           inDegree[n.id] = 0;
       });
 
-      edges.forEach(e => { 
-          directedAdj[e.source]?.push(e.target); 
-          parents[e.target]?.push(e.source); 
+      edges.forEach(e => {
+          const sourceDir = directedAdj[e.source];
+          const sourceUndir = undirectedAdj[e.source];
+          const targetUndir = undirectedAdj[e.target];
+
+          if (sourceDir) sourceDir.push(e.target);
           inDegree[e.target] = (inDegree[e.target] ?? 0) + 1;
-          undirectedAdj[e.source]?.push(e.target);
-          undirectedAdj[e.target]?.push(e.source);
+          if (sourceUndir) sourceUndir.push(e.target);
+          if (targetUndir) targetUndir.push(e.source);
       });
 
+      // --- 2. 分类节点 ---
       const connectedNodeIds = new Set<string>();
       const isolatedActiveIds: string[] = [];
       const isolatedFinishedIds: string[] = [];
 
-      nodes.forEach(n => { 
-          const isFinishedTask = n.type === 'task' && (n.data.status === 'x' || n.data.customStatus === 'finished'); 
+      nodes.forEach(n => {
+          const isFinishedTask = n.type === 'task' && (n.data.status === 'x' || n.data.customStatus === 'finished');
           const isConnected = (undirectedAdj[n.id]?.length ?? 0) > 0;
-          
           if (isConnected) {
               connectedNodeIds.add(n.id);
           } else if (isFinishedTask) {
@@ -476,23 +478,17 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           }
       });
 
-      const layout: Record<string, {x: number, y: number}> = {}; 
-      const COL_WIDTH = 380; 
-      // 🌟 核心提升 1：行高增至 240px，彻底告别任务卡片重叠！
-      const ROW_HEIGHT = 240; 
-      const COMPONENT_PADDING = 120; 
-
+      // --- 3. 找连通分量 ---
       const components: string[][] = [];
       const visited = new Set<string>();
-      
+
       connectedNodeIds.forEach(id => {
           if (!visited.has(id)) {
               const comp: string[] = [];
               const queue = [id];
               visited.add(id);
-              while(queue.length > 0) {
-                  const curr = queue.shift();
-                  if (curr === undefined) continue;
+              while (queue.length > 0) {
+                  const curr = queue.shift()!;
                   comp.push(curr);
                   undirectedAdj[curr]?.forEach(neighbor => {
                       if (!visited.has(neighbor)) {
@@ -505,210 +501,245 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           }
       });
 
-      const componentLayouts: { comp: string[], cMinY: number, cMaxY: number, layout: Record<string, {x: number, y: number}>, manualY: number }[] = [];
+      const layout: Record<string, { x: number; y: number }> = {};
+      const COL_WIDTH = 320;
+      const ROW_GAP = 130;
+      const COMPONENT_GAP = 60;
+      const NODE_HEIGHT = 100;
+
+      // --- 4. 记录用户排序（仅用于确定同层节点的相对顺序） ---
+      // 🌟 关键：只提取排序信息，不使用绝对坐标值，保证幂等性
+      const nodeMap = new Map(nodes.map(n => [n.id, n]));
+
+      const getUserOrderRank = (ids: string[]): string[] => {
+          return [...ids].sort((a, b) => {
+              const yA = nodeMap.get(a)?.position?.y ?? 0;
+              const yB = nodeMap.get(b)?.position?.y ?? 0;
+              return yA - yB;
+          });
+      };
+
+      // --- 5. 为每个连通分量做层级布局 ---
+      const componentResults: { comp: string[]; height: number }[] = [];
 
       components.forEach(comp => {
-          const compLevels: Record<string, number> = {};
-          comp.forEach(id => compLevels[id] = 0);
-          let changed = true; let iter = 0;
-          while (changed && iter < 100) {
+          // 5a. 计算层级
+          const level: Record<string, number> = {};
+          comp.forEach(id => { level[id] = 0; });
+
+          let changed = true;
+          let iter = 0;
+          while (changed && iter < 200) {
               changed = false;
+              iter++;
               edges.forEach(e => {
-                  const targetLvl = compLevels[e.target];
-                  const sourceLvl = compLevels[e.source];
-                  if (targetLvl !== undefined && sourceLvl !== undefined) {
-                      if (targetLvl <= sourceLvl) { 
-                          compLevels[e.target] = sourceLvl + 1; changed = true;
+                  if (level[e.source] !== undefined && level[e.target] !== undefined) {
+                      if (level[e.target]! <= level[e.source]!) {
+                          level[e.target] = level[e.source]! + 1;
+                          changed = true;
                       }
                   }
               });
-              iter++;
           }
 
-          const compLevelGroups: Record<number, string[]> = {};
+          // 5b. 按层级分组
+          const levelGroups: Record<number, string[]> = {};
           let maxLevel = 0;
           comp.forEach(id => {
-              const lvl = compLevels[id] ?? 0; 
-              maxLevel = Math.max(maxLevel, lvl); 
-              if (!compLevelGroups[lvl]) compLevelGroups[lvl] = [];
-              compLevelGroups[lvl]?.push(id); 
+              const lvl = level[id] ?? 0;
+              maxLevel = Math.max(maxLevel, lvl);
+              if (!levelGroups[lvl]) levelGroups[lvl] = [];
+              levelGroups[lvl]!.push(id);
           });
 
-          const cLayout: Record<string, {x: number, y: number}> = {};
-          
-          // 🌟 核心提升 2a：正向扫描（排布子节点，杜绝重叠）
-          for (let lvl = 0; lvl <= maxLevel; lvl++) {
-              const currentNodes = compLevelGroups[lvl] || [];
-              
-              currentNodes.sort((a, b) => {
-                  const nA = nodes.find(n => n.id === a);
-                  const nB = nodes.find(n => n.id === b);
-                  return (nA?.position.y ?? 0) - (nB?.position.y ?? 0);
-              });
-              
-              let currentY = -Infinity;
-              currentNodes.forEach((nodeId) => {
-                  let desiredY = 0;
-                  if (lvl > 0) {
-                      const nodeParents = parents[nodeId] || [];
-                      let sum = 0; let count = 0;
-                      nodeParents.forEach(p => { 
-                          const pPos = cLayout[p];
-                          if (pPos) { sum += pPos.y; count++; } 
-                      });
-                      // 子节点期望排在父节点的正右方
-                      desiredY = count > 0 ? sum / count : (currentY === -Infinity ? 0 : currentY + ROW_HEIGHT);
-                  } else {
-                      // 根节点初始按顺序排布
-                      desiredY = currentY === -Infinity ? 0 : currentY + ROW_HEIGHT;
-                  }
-                  
-                  // 强制分配在不重叠的网格上
-                  let assignedY = currentY === -Infinity ? desiredY : Math.max(currentY + ROW_HEIGHT, desiredY);
-                  cLayout[nodeId] = { x: lvl * COL_WIDTH, y: assignedY };
-                  currentY = assignedY; 
-              });
+          // 5c. 🌟 同层节点按用户Y排序（只取顺序，不取绝对值）
+          for (const lvl of Object.keys(levelGroups)) {
+              levelGroups[Number(lvl)] = getUserOrderRank(levelGroups[Number(lvl)]!);
           }
 
-          // 🌟 核心提升 2b：反向扫描 / 重心算法（拉下文本框/父节点，使其居中对齐）
-          for (let lvl = maxLevel - 1; lvl >= 0; lvl--) {
-              const currentNodes = compLevelGroups[lvl] || [];
-              
-              const nodeWithDesired = currentNodes.map(nodeId => {
-                  const nodeChildren = directedAdj[nodeId] || [];
-                  let sum = 0; let count = 0;
-                  nodeChildren.forEach(child => {
-                      const cPos = cLayout[child];
-                      if (cPos) { sum += cPos.y; count++; }
-                  });
-                  
-                  // 如果有子节点，父节点必须对齐到所有子节点的正中间！
-                  const currentPos = cLayout[nodeId];
-                  const desiredY = count > 0 ? sum / count : (currentPos ? currentPos.y : 0);
-                  return { id: nodeId, desiredY };
-              });
+          // 5d. 🌟 纯函数式布局：自底向上分配槽位，完全不依赖当前坐标
+          //     每个节点在同层中占据一个"槽位(slot)"，slot 从 0 开始
+          //     父节点的 slot = 子节点 slot 的中心值
+          //     最终 Y = slot * ROW_GAP
 
-              nodeWithDesired.sort((a, b) => a.desiredY - b.desiredY);
+          // 先计算每个节点的子树叶子数量（用于分配槽位宽度）
+          const subtreeSize: Record<string, number> = {};
 
-              let currentY = -Infinity;
-              nodeWithDesired.forEach(item => {
-                  let assignedY = currentY === -Infinity ? item.desiredY : Math.max(currentY + ROW_HEIGHT, item.desiredY);
-                  const pos = cLayout[item.id];
-                  if (pos) pos.y = assignedY;
-                  currentY = assignedY;
-              });
-          }
+          const getSubtreeSize = (id: string): number => {
+              if (subtreeSize[id] !== undefined) return subtreeSize[id]!;
+              const children = (directedAdj[id] || []).filter(cid => level[cid] !== undefined && comp.includes(cid));
+              if (children.length === 0) {
+                  subtreeSize[id] = 1;
+                  return 1;
+              }
+              let total = 0;
+              children.forEach(cid => { total += getSubtreeSize(cid); });
+              subtreeSize[id] = total;
+              return total;
+          };
+          comp.forEach(id => getSubtreeSize(id));
 
-          const cMinY = Math.min(...Object.values(cLayout).map(p => p.y));
-          const cMaxY = Math.max(...Object.values(cLayout).map(p => p.y));
-          
-          // 获取该组件当前的实际显示高度（锚点），用于决定这个分支在整个画布中的上下顺序
-          const manualCompMinY = Math.min(...comp.map(id => nodes.find(n => n.id === id)?.position.y ?? 0));
+          // 5e. 🌟 自底向上分配 slot：叶子节点紧凑排列，父节点居中
+          const slotY: Record<string, number> = {};
 
-          componentLayouts.push({ comp, layout: cLayout, cMinY, cMaxY, manualY: manualCompMinY });
-      });
+          // 处理最深层（叶子节点按顺序分配）
+          // 但叶子可能分布在不同层级，所以我们从最深层开始逐层处理
 
-      // 🌟 核心提升 3：全局绝对堆叠（俄罗斯方块）。
-      // 按照用户摆放的上下顺序排列，然后消除一切不必要的巨大空白！
-      componentLayouts.sort((a, b) => a.manualY - b.manualY);
-      
-      let globalBottom = 0;
-      componentLayouts.forEach((c, index) => {
-          let shiftY = 0;
-          if (index === 0) {
-              // 第一个组件直接贴在 0 的位置（或者贴在它原本的位置）
-              shiftY = c.manualY - c.cMinY;
-              globalBottom = c.manualY + (c.cMaxY - c.cMinY) + COMPONENT_PADDING;
-          } else {
-              // 后续组件无条件贴在上方组件的底部，消除无限拉扯！
-              shiftY = globalBottom - c.cMinY;
-              globalBottom += (c.cMaxY - c.cMinY) + COMPONENT_PADDING;
-          }
-          
-          c.comp.forEach(id => {
-              const pos = c.layout[id];
-              if (pos !== undefined) {
-                  layout[id] = { x: pos.x, y: pos.y + shiftY };
+          // 方法：为每个根节点的子树递归分配连续的 slot 区间
+          // 根节点 = 入度为 0 的节点（在本分量内）
+          const compInDegree: Record<string, number> = {};
+          comp.forEach(id => { compInDegree[id] = 0; });
+          edges.forEach(e => {
+              if (compInDegree[e.target] !== undefined && comp.includes(e.source)) {
+                  compInDegree[e.target] = (compInDegree[e.target] ?? 0) + 1;
               }
           });
+
+          const roots = comp.filter(id => (compInDegree[id] ?? 0) === 0);
+          // 按用户顺序排列根节点
+          const sortedRoots = getUserOrderRank(roots);
+
+          // 递归分配：给节点 id 分配从 startSlot 开始的区间，返回使用的 slot 数
+          const assignSlots = (id: string, startSlot: number): number => {
+              const children = (directedAdj[id] || [])
+                  .filter(cid => comp.includes(cid));
+
+              if (children.length === 0) {
+                  // 叶子：占一个 slot
+                  slotY[id] = startSlot;
+                  return 1;
+              }
+
+              // 🌟 子节点按用户Y排序
+              const sortedChildren = getUserOrderRank(children);
+
+              // 递归分配子节点
+              let currentSlot = startSlot;
+              let totalUsed = 0;
+              sortedChildren.forEach(childId => {
+                  const used = assignSlots(childId, currentSlot);
+                  currentSlot += used;
+                  totalUsed += used;
+              });
+
+              // 父节点居中：slot = 子节点区间的中心
+              const firstChildSlot = slotY[sortedChildren[0]!] ?? startSlot;
+              const lastChildSlot = slotY[sortedChildren[sortedChildren.length - 1]!] ?? startSlot;
+              slotY[id] = (firstChildSlot + lastChildSlot) / 2;
+
+              return totalUsed;
+          };
+
+          let globalSlot = 0;
+          sortedRoots.forEach(rootId => {
+              const used = assignSlots(rootId, globalSlot);
+              globalSlot += used;
+          });
+
+          // 处理可能没被分配到的节点（如环中的节点）
+          comp.forEach(id => {
+              if (slotY[id] === undefined) {
+                  slotY[id] = globalSlot;
+                  globalSlot += 1;
+              }
+          });
+
+          // 5f. 转换 slot → 实际坐标
+          const compLayout: Record<string, { x: number; y: number }> = {};
+          comp.forEach(id => {
+              compLayout[id] = {
+                  x: (level[id] ?? 0) * COL_WIDTH,
+                  y: (slotY[id] ?? 0) * ROW_GAP,
+              };
+          });
+
+          // 归一化：最小 Y = 0
+          const allYs = Object.values(compLayout).map(p => p.y);
+          const minY = Math.min(...allYs);
+          const maxY = Math.max(...allYs);
+          Object.values(compLayout).forEach(p => { p.y -= minY; });
+
+          comp.forEach(id => {
+              layout[id] = { ...compLayout[id]! };
+          });
+
+          componentResults.push({ comp, height: maxY - minY });
       });
 
-      let maxY = globalBottom;
+      // --- 6. 分量堆叠：按大小降序，从 Y=0 紧凑排列 ---
+      componentResults.sort((a, b) => b.comp.length - a.comp.length);
 
-      // 🌟 核心提升 4：活跃孤岛任务紧凑网格
+      let globalY = 0;
+      componentResults.forEach(cr => {
+          cr.comp.forEach(id => {
+              if (layout[id]) {
+                  layout[id]!.y += globalY;
+              }
+          });
+          globalY += cr.height + NODE_HEIGHT + COMPONENT_GAP;
+      });
+
+      // --- 7. 孤立活跃节点 ---
       if (isolatedActiveIds.length > 0) {
-          let startY = maxY;
-          const ISOLATED_COLS = 3;
-          // 减小行高让孤岛任务更紧凑
-          const ISO_ROW_HEIGHT = ROW_HEIGHT * 0.8; 
-
-          const sortedActive = isolatedActiveIds.sort((a, b) => {
-              const nA = nodes.find(n => n.id === a);
-              const nB = nodes.find(n => n.id === b);
-              return (nA?.position.y ?? 0) - (nB?.position.y ?? 0);
+          const sorted = getUserOrderRank(isolatedActiveIds);
+          const COLS = 3;
+          const startY = globalY;
+          sorted.forEach((id, idx) => {
+              const row = Math.floor(idx / COLS);
+              const col = idx % COLS;
+              layout[id] = { x: col * COL_WIDTH, y: startY + row * ROW_GAP };
           });
-
-          sortedActive.forEach((item, idx) => {
-              const row = Math.floor(idx / ISOLATED_COLS);
-              const col = idx % ISOLATED_COLS;
-              layout[item] = { x: col * COL_WIDTH, y: startY + row * ISO_ROW_HEIGHT };
-          });
-
-          const maxRow = Math.floor((sortedActive.length - 1) / ISOLATED_COLS);
-          maxY = startY + (maxRow + 1) * ISO_ROW_HEIGHT + COMPONENT_PADDING;
+          const maxRow = Math.floor((sorted.length - 1) / COLS);
+          globalY = startY + (maxRow + 1) * ROW_GAP + COMPONENT_GAP;
       }
-      
-      // 🌟 核心提升 5：已完成孤岛任务沉底网格
+
+      // --- 8. 孤立已完成节点 ---
       if (isolatedFinishedIds.length > 0) {
-          let startY = maxY;
-          const FINISHED_COLS = 4;
-          // 已完成任务不需要太大空间，进一步压缩行高
-          const FINISHED_ROW_HEIGHT = ROW_HEIGHT * 0.6; 
-          
-          const sortedFinished = isolatedFinishedIds.sort((a, b) => {
-              const nA = nodes.find(n => n.id === a);
-              const nB = nodes.find(n => n.id === b);
-              return (nA?.position.y ?? 0) - (nB?.position.y ?? 0);
-          });
-
-          sortedFinished.forEach((item, idx) => { 
-              const row = Math.floor(idx / FINISHED_COLS); 
-              const col = idx % FINISHED_COLS; 
-              layout[item] = { x: col * COL_WIDTH, y: startY + row * FINISHED_ROW_HEIGHT }; 
+          const COLS = 4;
+          const COMPACT_GAP = ROW_GAP * 0.75;
+          const startY = globalY;
+          isolatedFinishedIds.forEach((id, idx) => {
+              const row = Math.floor(idx / COLS);
+              const col = idx % COLS;
+              layout[id] = { x: col * COL_WIDTH, y: startY + row * COMPACT_GAP };
           });
       }
 
-      setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] ?? n.position }))); 
-      
+      // --- 9. 应用布局 ---
+      setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] ?? n.position })));
+
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (board) {
-         // 严格 TS 类型检查守护
-         const mergedLayout = { ...board.data.layout };
-         const updatedTextNodes = board.data.textNodes.map(tn => ({ ...tn }));
+          const mergedLayout = { ...board.data.layout };
+          const updatedTextNodes = board.data.textNodes.map(tn => ({ ...tn }));
 
-         Object.keys(layout).forEach(nodeId => {
-             const node = nodes.find(n => n.id === nodeId);
-             const newPos = layout[nodeId];
-             
-             if (newPos !== undefined) {
-                 if (node?.type === 'task') {
-                     mergedLayout[nodeId] = newPos;
-                 } else if (node?.type === 'text') {
-                     const tnIndex = updatedTextNodes.findIndex(tn => tn.id === nodeId);
-                     if (tnIndex > -1) {
-                         const textNodeToUpdate = updatedTextNodes[tnIndex];
-                         if (textNodeToUpdate !== undefined) {
-                             textNodeToUpdate.x = newPos.x;
-                             textNodeToUpdate.y = newPos.y;
-                         }
-                     }
-                 }
-             }
-         });
+          Object.keys(layout).forEach(nodeId => {
+              const node = nodes.find(n => n.id === nodeId);
+              const newPos = layout[nodeId];
+              if (newPos !== undefined) {
+                  if (node?.type === 'task') {
+                      mergedLayout[nodeId] = newPos;
+                  } else if (node?.type === 'text') {
+                      const tnIndex = updatedTextNodes.findIndex(tn => tn.id === nodeId);
+                      if (tnIndex > -1) {
+                          const textNodeToUpdate = updatedTextNodes[tnIndex];
+                          if (textNodeToUpdate !== undefined) {
+                              textNodeToUpdate.x = newPos.x;
+                              textNodeToUpdate.y = newPos.y;
+                          }
+                      }
+                  }
+              }
+          });
 
-         await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes }); 
+          await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes });
       }
-      new Notice("Smart layout applied!"); 
+
+      setTimeout(() => {
+          reactFlowInstance.fitView({ padding: 0.15, duration: 300 });
+      }, 50);
+
+      new Notice("Smart layout applied!");
   };
 
   const handleResetView = async () => { 
@@ -742,7 +773,8 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
         onNodeContextMenu={onNodeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
         nodeTypes={nodeTypes} 
-        defaultEdgeOptions={{ type: 'smoothstep', style: { strokeWidth: 2, stroke: 'var(--interactive-accent)' } }}
+        // 🌟 核心修改：恢复贝塞尔曲线连线，完美契合发散型思维导图
+        defaultEdgeOptions={{ type: 'default', style: { strokeWidth: 2, stroke: 'var(--interactive-accent)' } }}
         fitView minZoom={0.1} maxZoom={4}
         nodesDraggable={true} nodesConnectable={true} elementsSelectable={true}
         snapToGrid={true} snapGrid={[24, 24]}
@@ -750,7 +782,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
         panOnScroll={true} zoomOnScroll={true} preventScrolling={false}
         selectionOnDrag={true} selectionMode={SelectionMode.Partial} panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode="Shift"
         connectionLineStyle={{ stroke: 'var(--interactive-accent)', strokeWidth: 2, strokeDasharray: '5,5' }}
-        connectionLineType={ConnectionLineType.SmoothStep}
+        connectionLineType={ConnectionLineType.Bezier}
       >
         <Background gap={24} color="rgba(150,150,150,0.1)" size={1.5} />
         <GraphToolbar />
