@@ -57,10 +57,9 @@ const CUSTOM_STYLES = `
     .custom-handle::after { content: ""; display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); border: 2px solid var(--background-primary); transition: transform 0.2s, background 0.2s; }
     .custom-handle:hover::after { transform: scale(1.2); background: var(--interactive-accent); }
     .custom-handle-right::after { background: var(--interactive-accent); }
-    .task-node-wrapper { position: relative; width: 240px; height: auto; min-height: 80px; background: var(--background-secondary); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); transition: all 0.2s; border: 1px solid var(--background-modifier-border); overflow: hidden; display: flex; flex-direction: column; }
+    .task-node-wrapper { position: relative; width: 240px; height: auto; min-height: 80px; background: var(--background-secondary); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease; border: 2px solid var(--background-modifier-border); overflow: hidden; display: flex; flex-direction: column; }
     .task-node-wrapper:hover { transform: translateY(-2px) scale(1.01); box-shadow: 0 12px 24px rgba(0,0,0,0.12); z-index: 10; }
-    .react-flow__node.selected .task-node-wrapper { border: 1px solid var(--interactive-accent); box-shadow: 0 0 0 3px rgba(var(--interactive-accent-rgb), 0.2); }
-    .text-node-wrapper { min-width: 150px; max-width: 300px; background: var(--background-primary-alt); color: var(--text-normal); border-radius: 8px; padding: 12px; font-family: var(--font-text); box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; position: relative; height: auto; border: 1px dashed var(--text-accent); transition: all 0.2s; }
+    .text-node-wrapper { min-width: 150px; max-width: 300px; background: var(--background-primary-alt); color: var(--text-normal); border-radius: 8px; padding: 12px; font-family: var(--font-text); box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; position: relative; height: auto; border: 2px dashed var(--text-accent); transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease; }
     .react-flow__node.selected .text-node-wrapper { border-style: solid; border-color: var(--interactive-accent); }
     .text-node-textarea { background: transparent; border: none; color: inherit; width: 100%; text-align: center; resize: none; font-size: 14px; outline: none; overflow: hidden; }
     .node-tag { font-size: 10px; padding: 3px 8px; border-radius: 12px; font-weight: 600; background-color: var(--background-modifier-active-hover); color: var(--text-muted); }
@@ -98,7 +97,10 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
   const { tags, cleanText } = extractTags(data.label);
   const statusColor = STATUS_COLORS[data.customStatus as keyof typeof STATUS_COLORS] || STATUS_COLORS['default'];
   
-  const handleCheckboxClick = (e: React.MouseEvent) => { e.stopPropagation(); data.onToggleStatus(data.id, data.status); };
+  const handleCheckboxClick = (e: React.ChangeEvent<HTMLInputElement>) => { 
+    e.stopPropagation(); 
+    data.onToggleStatus(data.id, data.status); 
+};
   const handleOpenFile = (e: React.MouseEvent) => { e.stopPropagation(); data.onOpenFile(data.path); };
 
   return (
@@ -111,7 +113,15 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
             <div className="edit-btn" onClick={(e) => { e.stopPropagation(); data.onEdit(data); }} title="Edit Task">✎</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-            <input type="checkbox" className="custom-checkbox" checked={data.status === 'x'} onChange={() => {}} onClick={handleCheckboxClick} style={{ marginTop: '3px' }} />
+            <input 
+                type="checkbox" 
+                className="custom-checkbox nodrag" // 关键：阻断 React Flow 内部处理
+                checked={data.status === 'x'} 
+                onChange={(e) => data.onToggleStatus(data.id, data.status)} 
+                onClick={(e) => {e.stopPropagation();data.onToggleStatus(data.id, data.status, data.path, data.line);}} // 关键：阻断原生点击冒泡
+                onMouseDown={(e) => e.stopPropagation()} // 关键：阻断原生鼠标按下冒泡
+                style={{ marginTop: '3px' }} 
+            />
             <div style={{ fontSize: '13px', lineHeight: '1.5', color: 'var(--text-normal)', fontWeight: '500', marginBottom: '10px', wordBreak: 'break-word', whiteSpace: 'pre-wrap', opacity: (data.status === 'x' ? 0.6 : 1), textDecoration: (data.status === 'x' ? 'line-through' : 'none') }}>{cleanText || data.label}</div>
           </div>
           <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '8px' }}>
@@ -229,6 +239,101 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     
     return (<Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '20px', margin: 0, background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '300px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={onAddBoard} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={onAutoLayout}>⚡ Layout</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={onResetView}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}><input style={inputStyle} placeholder="Filter Tags..." value={currentBoard.filters.tags.join(', ')} onChange={(e) => onUpdateFilter('tags', e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} /><input style={inputStyle} placeholder="Filter Path..." value={currentBoard.filters.folders.join(', ')} onChange={(e) => onUpdateFilter('folders', e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} /><div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>{[' ', '/', 'x'].map(status => (<label key={status} style={{fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-normal)'}}><input type="checkbox" className="filter-checkbox" checked={currentBoard.filters.status.includes(status)} onChange={() => onUpdateFilter('status', status)} /> {status === ' ' ? 'Todo' : status === '/' ? 'Doing' : 'Done'}</label>))}</div></div>)}</Panel>);
 };
+const HelpPanel = ({ onClose }: { onClose: () => void }) => {
+    const [lang, setLang] = React.useState<'en' | 'zh'>('zh');
+
+    const content = {
+        en: {
+            title: '📖 User Guide',
+            sections: [
+                { heading: '🔗 Connect tasks', items: [
+                    'Drag from a node\'s right dot to another node\'s left dot to create a dependency',
+                    'Drag to empty space to quickly create a sub-task',
+                    'Right-click a connection line to remove it',
+                ]},
+                { heading: '📝 Text nodes', items: [
+                    'Right-click canvas → Add Note to create a text annotation',
+                    'Text nodes can connect to tasks as category labels',
+                ]},
+                { heading: '✅ Task actions', items: [
+                    'Click the checkbox to toggle completion (auto-syncs to source file)',
+                    'Completed tasks in branches keep their position',
+                    'Right-click a task to change status',
+                ]},
+                { heading: '🖱️  Canvas', items: [
+                    'Left-drag on empty space: box-select multiple nodes',
+                    'Middle / right-drag: pan canvas',
+                    'Scroll wheel: zoom',
+                    'Hold Shift + click: multi-select',
+                ]},
+                { heading: '📐 Layout', items: [
+                    'Click ⚡ Layout to auto-arrange all nodes',
+                    'Preserves the vertical order you set manually',
+                    'Parent nodes auto-center to their children',
+                ]},
+                { heading: '📋  Sidebar', items: [
+                    'Click a task name to fly to that node',
+                    'Drag tasks between status groups to change status',
+                ]},
+            ]
+        },
+        zh: {
+            title: '📖 使用说明',
+            sections: [
+                { heading: '🔗 连接任务', items: [
+                    '从节点右侧圆点拖拽到另一节点左侧圆点，创建依赖关系',
+                    '拖拽到空白处可快速创建子任务',
+                    '右键点击连线可删除连接',
+                ]},
+                { heading: '📝 文本节点', items: [
+                    '右键画布空白处 → Add Note，创建文本标注',
+                    '文本节点可连接到任务，作为分类标签',
+                ]},
+                { heading: '✅ 任务操作', items: [
+                    '点击复选框切换完成状态（自动同步源文件）',
+                    '分支中的已完成任务会保留位置，不会消失',
+                    '右键任务可更改状态',
+                ]},
+                { heading: '🖱️ 画布交互', items: [
+                    '左键拖拽空白：框选多个节点',
+                    '中键 / 右键拖拽：平移画布',
+                    '滚轮：缩放',
+                    '按住 Shift + 点击：多选节点',
+                ]},
+                { heading: '📐 Layout', items: [
+                    '点击 ⚡ Layout 自动排列节点',
+                    '保留你手动调整的子节点纵向顺序',
+                    '父节点自动居中对齐子节点',
+                ]},
+                { heading: '📋 侧边栏', items: [
+                    '点击任务名跳转至该节点',
+                    '拖拽任务到不同状态分组可快速变更状态',
+                ]},
+            ]
+        }
+    };
+
+    const c = content[lang];
+
+    return (
+        <div className="task-graph-help-panel">
+            <button className="task-graph-help-close" onClick={onClose}>✕</button>
+            <h3>
+                {c.title}
+                <span className="task-graph-help-lang-toggle">
+                    <button className={`task-graph-help-lang-btn ${lang === 'en' ? 'active' : ''}`} onClick={() => setLang('en')}>EN</button>
+                    <button className={`task-graph-help-lang-btn ${lang === 'zh' ? 'active' : ''}`} onClick={() => setLang('zh')}>中</button>
+                </span>
+            </h3>
+            {c.sections.map((sec, i) => (
+                <div key={i}>
+                    <h4>{sec.heading}</h4>
+                    <ul>{sec.items.map((item, j) => <li key={j}>{item}</li>)}</ul>
+                </div>
+            ))}
+        </div>
+    );
+};
 
 // --- 主图表组件 ---
 const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
@@ -239,6 +344,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const [editTarget, setEditTarget] = React.useState<{id: string, text: string, path: string, line: number} | null>(null);
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
   const [allTags, setAllTags] = React.useState<string[]>([]);
+  const [showHelp, setShowHelp] = React.useState(false); // 需求2: 帮助面板状态
   const reactFlowInstance = useReactFlow();
   const connectionStartRef = React.useRef<{ nodeId: string | null; handleType: string | null }>({ nodeId: null, handleType: null });
   const connectionMadeRef = React.useRef(false);
@@ -308,22 +414,62 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       }
   }, [nodes]);
 
-  const handleToggleTask = async (id: string, currentStatus: string) => {
-      const node = nodes.find(n => n.id === id); if (!node) return;
+  const handleToggleTask = async (id: string, currentStatus: string, path: string, line: number) => {
+      
       const newStatus = (currentStatus === ' ' || currentStatus === '/') ? 'x' : ' ';
       const newCustomStatus = newStatus === 'x' ? 'finished' : 'backlog'; 
-      setNodes(nds => nds.map(n => { if (n.id === id) { return { ...n, data: { ...n.data, status: newStatus, customStatus: newCustomStatus } }; } return n; }));
-      const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const nodeStatus = board.data.nodeStatus || {}; nodeStatus[id] = newCustomStatus; await plugin.saveBoardData(activeBoardId, { nodeStatus }); }
-      const file = plugin.app.vault.getAbstractFileByPath(node.data.path);
+      
+      // 乐观更新 UI
+      setNodes(nds => nds.map(n => { 
+          if (n.id === id) { 
+              return { ...n, data: { ...n.data, status: newStatus, customStatus: newCustomStatus } }; 
+          } 
+          return n; 
+      }));
+      
+      const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
+      if (board) { 
+          const nodeStatus = board.data.nodeStatus || {}; 
+          nodeStatus[id] = newCustomStatus; 
+          await plugin.saveBoardData(activeBoardId, { nodeStatus }); 
+      }
+      
+      const file = plugin.app.vault.getAbstractFileByPath(path);
       if (file instanceof TFile) {
-           const content = await plugin.app.vault.read(file); const lines = content.split('\n');
-           let line = lines[node.data.line]; 
-           if (line === undefined) return;
-           line = line.replace(/(- \[)(.)(\])/, `$1${newStatus}$3`);
-           const today = new Date(); const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-           const completionTag = ` ✅ ${dateStr}`; const completionRegex = / ✅ \d{4}-\d{2}-\d{2}/g;
-           if (newStatus === 'x') { if (!completionRegex.test(line)) { line = line.trimEnd() + completionTag; } } else { line = line.replace(completionRegex, ''); }
-           lines[node.data.line] = line; await plugin.app.vault.modify(file, lines.join('\n'));
+           const content = await plugin.app.vault.read(file); 
+           const lines = content.split('\n');
+           // 3. 直接使用传入的 line
+           let currentLineText = lines[line]; 
+           if (currentLineText === undefined) return;
+
+           // --- 下面保留我们之前写好的完美正则解析逻辑 ---
+           const lineRegex = /^(\s*- \[[x\s\/bc!-]\]\s)(.*?)(?:\s+(\^[a-zA-Z0-9\-]+))?$/;
+           const match = currentLineText.match(lineRegex);
+
+           if (match) {
+               let prefix = match[1] || '- [ ] ';
+               let textContent = match[2] || '';
+               const blockId = match[3] ? ` ${match[3]}` : '';
+
+               prefix = prefix.replace(/\[.\]/, `[${newStatus}]`);
+
+               const completionRegex = /\s*✅\s*\d{4}-\d{2}-\d{2}/g;
+               if (newStatus === 'x') {
+                   if (!completionRegex.test(textContent)) {
+                       const today = new Date();
+                       const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                       textContent += ` ✅ ${dateStr}`;
+                   }
+               } else {
+                   textContent = textContent.replace(completionRegex, '');
+               }
+
+               lines[line] = `${prefix}${textContent}${blockId}`;
+           } else {
+               console.warn("TaskGraph: Failed to parse line format:", currentLineText);
+           }
+           
+           await plugin.app.vault.modify(file, lines.join('\n'));
       }
   };
 
@@ -504,25 +650,22 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       const layout: Record<string, { x: number; y: number }> = {};
       const COL_WIDTH = 320;
       const COMPONENT_GAP = 60;
-      const NODE_HEIGHT = 100;
+      const MIN_GAP = 30; // 节点之间的最小空隙
+      const DEFAULT_NODE_HEIGHT = 100;
 
-      // --- 4. 🌟 动态计算行间距：基于节点实际高度 ---
-      // 测量每个节点的 DOM 高度，取最大值作为基准
-      const measuredHeights: number[] = [];
+      // 需求4: 逐节点测量实际 DOM 高度
+      const nodeHeightMap: Record<string, number> = {};
+      const zoom = reactFlowInstance?.getZoom() ?? 1;
       nodes.forEach(n => {
           const el = document.querySelector(`[data-id="${n.id}"]`);
           if (el) {
               const rect = el.getBoundingClientRect();
-              measuredHeights.push(rect.height);
+              nodeHeightMap[n.id] = rect.height / zoom;
+          } else {
+              nodeHeightMap[n.id] = DEFAULT_NODE_HEIGHT;
           }
       });
-      const maxNodeHeight = measuredHeights.length > 0
-          ? Math.max(...measuredHeights)
-          : 80; // 默认估计高度
-      // 行间距 = 最大节点高度 + 固定间隙（至少 160px）
-      const ROW_GAP = Math.max(160, maxNodeHeight + 40);
 
-      // --- 5. 记录用户排序（仅取顺序，不取绝对值） ---
       const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
       const getUserOrderRank = (ids: string[]): string[] => {
@@ -533,11 +676,9 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           });
       };
 
-      // --- 6. 为每个连通分量做层级布局 ---
       const componentResults: { comp: string[]; height: number }[] = [];
 
       components.forEach(comp => {
-          // 6a. 计算层级
           const level: Record<string, number> = {};
           comp.forEach(id => { level[id] = 0; });
 
@@ -556,7 +697,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               });
           }
 
-          // 6b. 按层级分组
           const levelGroups: Record<number, string[]> = {};
           let maxLevel = 0;
           comp.forEach(id => {
@@ -566,69 +706,100 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               levelGroups[lvl]!.push(id);
           });
 
-          // 6c. 同层节点按用户Y排序
           for (const lvl of Object.keys(levelGroups)) {
               levelGroups[Number(lvl)] = getUserOrderRank(levelGroups[Number(lvl)]!);
           }
 
-          // 6d. 🌟 子树 slot 分配（纯函数式，完全幂等）
-          const slotY: Record<string, number> = {};
+          // 需求4: 使用实际高度的子树分配
+          // posY 存实际像素Y坐标（不再是 slot）
+          const posY: Record<string, number> = {};
           const assignedNodes = new Set<string>();
 
-          // 计算每个节点在本分量内的直接子节点
           const compChildren = (id: string): string[] => {
               return (directedAdj[id] || []).filter(cid => comp.includes(cid));
           };
 
-          // 递归分配 slot 区间：节点 id 从 startSlot 开始，返回占用的 slot 数
-          const assignSlots = (id: string, startSlot: number): number => {
-              if (assignedNodes.has(id)) {
-                  // 已经被其他父节点分配过（多父节点/菱形），不再重复分配
-                  return 0;
+          // 计算子树需要的总高度
+          const subtreeHeight: Record<string, number> = {};
+          const computeSubtreeHeight = (id: string, visitedCalc: Set<string>): number => {
+              if (subtreeHeight[id] !== undefined) return subtreeHeight[id]!;
+              if (visitedCalc.has(id)) {
+                  subtreeHeight[id] = (nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT) + MIN_GAP;
+                  return subtreeHeight[id]!;
               }
+              visitedCalc.add(id);
+
+              const children = compChildren(id);
+              const nodeH = nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT;
+
+              if (children.length === 0) {
+                  subtreeHeight[id] = nodeH + MIN_GAP;
+                  return subtreeHeight[id]!;
+              }
+
+              let childrenTotalH = 0;
+              const sortedChildren = getUserOrderRank(children);
+              sortedChildren.forEach(cid => {
+                  childrenTotalH += computeSubtreeHeight(cid, visitedCalc);
+              });
+
+              subtreeHeight[id] = Math.max(nodeH + MIN_GAP, childrenTotalH);
+              return subtreeHeight[id]!;
+          };
+
+          const visitedCalc = new Set<string>();
+          comp.forEach(id => computeSubtreeHeight(id, visitedCalc));
+
+          // 递归分配位置
+          const assignPositions = (id: string, startY: number): number => {
+              if (assignedNodes.has(id)) return 0;
               assignedNodes.add(id);
 
               const children = compChildren(id);
-              // 过滤掉已被分配的子节点（共享子节点情况）
-              const unassignedChildren = children.filter(cid => !assignedNodes.has(cid));
-              const assignedChildren = children.filter(cid => assignedNodes.has(cid));
+              const unassigned = children.filter(cid => !assignedNodes.has(cid));
+              const nodeH = nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT;
 
-              if (children.length === 0) {
-                  // 叶子节点
-                  slotY[id] = startSlot;
-                  return 1;
+              if (children.length === 0 || unassigned.length === 0) {
+                  posY[id] = startY;
+                  return nodeH + MIN_GAP;
               }
 
-              // 子节点按用户排序
-              const sortedUnassigned = getUserOrderRank(unassignedChildren);
-
-              // 递归分配未被分配的子节点
-              let currentSlot = startSlot;
+              const sortedChildren = getUserOrderRank(unassigned);
+              let currentY = startY;
               let totalUsed = 0;
-              sortedUnassigned.forEach(childId => {
-                  const used = assignSlots(childId, currentSlot);
-                  currentSlot += used;
+
+              sortedChildren.forEach(childId => {
+                  const used = assignPositions(childId, currentY);
+                  currentY += used;
                   totalUsed += used;
               });
 
-              // 父节点 slot = 所有子节点（含已分配的）的 slot 中心
-              const allChildSlots = children
-                  .map(cid => slotY[cid])
-                  .filter((s): s is number => s !== undefined);
+              // 父节点居中于所有子节点（含已分配的）
+              const allChildYs = children
+                  .map(cid => posY[cid])
+                  .filter((y): y is number => y !== undefined);
 
-              if (allChildSlots.length > 0) {
-                  const minSlot = Math.min(...allChildSlots);
-                  const maxSlot = Math.max(...allChildSlots);
-                  slotY[id] = (minSlot + maxSlot) / 2;
+              if (allChildYs.length > 0) {
+                  const firstY = Math.min(...allChildYs);
+                  const lastChildId = children.reduce((acc, cid) => {
+                      const y = posY[cid];
+                      const accY = posY[acc];
+                      if (y === undefined) return acc;
+                      if (accY === undefined) return cid;
+                      return y > accY ? cid : acc;
+                  }, children[0]!);
+                  const lastY = posY[lastChildId] ?? startY;
+                  const lastH = nodeHeightMap[lastChildId] ?? DEFAULT_NODE_HEIGHT;
+                  const childRangeCenter = (firstY + lastY + lastH) / 2;
+                  posY[id] = childRangeCenter - nodeH / 2;
               } else {
-                  slotY[id] = startSlot;
-                  totalUsed = Math.max(totalUsed, 1);
+                  posY[id] = startY;
               }
 
-              return Math.max(totalUsed, 1);
+              return Math.max(totalUsed, nodeH + MIN_GAP);
           };
 
-          // 找根节点（本分量内入度为0）
+          // 找根节点
           const compInDegree: Record<string, number> = {};
           comp.forEach(id => { compInDegree[id] = 0; });
           edges.forEach(e => {
@@ -640,58 +811,64 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           const roots = comp.filter(id => (compInDegree[id] ?? 0) === 0);
           const sortedRoots = getUserOrderRank(roots);
 
-          let globalSlot = 0;
+          let globalStartY = 0;
           sortedRoots.forEach(rootId => {
-              const used = assignSlots(rootId, globalSlot);
-              globalSlot += used;
+              const used = assignPositions(rootId, globalStartY);
+              globalStartY += used;
           });
 
-          // 处理未被分配到的节点（环或孤立在分量中的）
+          // 未分配的节点
           comp.forEach(id => {
-              if (slotY[id] === undefined) {
-                  slotY[id] = globalSlot;
-                  globalSlot += 1;
+              if (posY[id] === undefined) {
+                  posY[id] = globalStartY;
+                  globalStartY += (nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT) + MIN_GAP;
               }
           });
 
-          // 6e. 🌟 防重叠后处理：同层节点按 slot 排序后强制最小间距
+          // 需求4: 同层防重叠 — 用实际节点高度检测
           for (let lvl = 0; lvl <= maxLevel; lvl++) {
               const group = levelGroups[lvl] || [];
-              // 按已分配的 slot 排序
-              const sorted = [...group].sort((a, b) => (slotY[a] ?? 0) - (slotY[b] ?? 0));
+              const sorted = [...group].sort((a, b) => (posY[a] ?? 0) - (posY[b] ?? 0));
               for (let i = 1; i < sorted.length; i++) {
-                  const prevSlot = slotY[sorted[i - 1]!] ?? 0;
-                  const currSlot = slotY[sorted[i]!] ?? 0;
-                  if (currSlot < prevSlot + 1) {
-                      // 推开重叠的节点
-                      slotY[sorted[i]!] = prevSlot + 1;
+                  const prevId = sorted[i - 1]!;
+                  const currId = sorted[i]!;
+                  const prevBottom = (posY[prevId] ?? 0) + (nodeHeightMap[prevId] ?? DEFAULT_NODE_HEIGHT) + MIN_GAP;
+                  const currTop = posY[currId] ?? 0;
+                  if (currTop < prevBottom) {
+                      posY[currId] = prevBottom;
                   }
               }
           }
 
-          // 6f. slot → 坐标
+          // 转坐标
           const compLayout: Record<string, { x: number; y: number }> = {};
           comp.forEach(id => {
               compLayout[id] = {
                   x: (level[id] ?? 0) * COL_WIDTH,
-                  y: (slotY[id] ?? 0) * ROW_GAP,
+                  y: posY[id] ?? 0,
               };
           });
 
           // 归一化
           const allYs = Object.values(compLayout).map(p => p.y);
           const minY = Math.min(...allYs);
-          const maxY = Math.max(...allYs);
           Object.values(compLayout).forEach(p => { p.y -= minY; });
+
+          // 计算分量总高度（含最后一个节点的高度）
+          let compMaxBottom = 0;
+          comp.forEach(id => {
+              const y = compLayout[id]?.y ?? 0;
+              const h = nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT;
+              compMaxBottom = Math.max(compMaxBottom, y + h);
+          });
 
           comp.forEach(id => {
               layout[id] = { ...compLayout[id]! };
           });
 
-          componentResults.push({ comp, height: maxY - minY });
+          componentResults.push({ comp, height: compMaxBottom });
       });
 
-      // --- 7. 分量堆叠 ---
       componentResults.sort((a, b) => b.comp.length - a.comp.length);
 
       let globalY = 0;
@@ -701,27 +878,28 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
                   layout[id]!.y += globalY;
               }
           });
-          globalY += cr.height + NODE_HEIGHT + COMPONENT_GAP;
+          globalY += cr.height + COMPONENT_GAP;
       });
 
-      // --- 8. 孤立活跃节点 ---
+      // 孤立活跃节点
       if (isolatedActiveIds.length > 0) {
           const sorted = getUserOrderRank(isolatedActiveIds);
           const COLS = 3;
+          const ISO_ROW_GAP = 140;
           const startY = globalY;
           sorted.forEach((id, idx) => {
               const row = Math.floor(idx / COLS);
               const col = idx % COLS;
-              layout[id] = { x: col * COL_WIDTH, y: startY + row * ROW_GAP };
+              layout[id] = { x: col * COL_WIDTH, y: startY + row * ISO_ROW_GAP };
           });
           const maxRow = Math.floor((sorted.length - 1) / COLS);
-          globalY = startY + (maxRow + 1) * ROW_GAP + COMPONENT_GAP;
+          globalY = startY + (maxRow + 1) * ISO_ROW_GAP + COMPONENT_GAP;
       }
 
-      // --- 9. 孤立已完成节点 ---
+      // 孤立已完成节点
       if (isolatedFinishedIds.length > 0) {
           const COLS = 4;
-          const COMPACT_GAP = ROW_GAP * 0.75;
+          const COMPACT_GAP = 100;
           const startY = globalY;
           isolatedFinishedIds.forEach((id, idx) => {
               const row = Math.floor(idx / COLS);
@@ -730,7 +908,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           });
       }
 
-      // --- 10. 应用布局（不改变视口） ---
       setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] ?? n.position })));
 
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
@@ -794,7 +971,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
         onNodeContextMenu={onNodeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
         nodeTypes={nodeTypes} 
-        // 🌟 核心修改：恢复贝塞尔曲线连线，完美契合发散型思维导图
         defaultEdgeOptions={{ type: 'default', style: { strokeWidth: 2, stroke: 'var(--interactive-accent)' } }}
         fitView minZoom={0.1} maxZoom={4}
         nodesDraggable={true} nodesConnectable={true} elementsSelectable={true}
@@ -808,6 +984,22 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
         <Background gap={24} color="rgba(150,150,150,0.1)" size={1.5} />
         <GraphToolbar />
         <ControlPanel boards={plugin.settings.boards} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onDeleteBoard={handleDeleteBoard} onAutoLayout={handleAutoLayout} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} />
+        
+        {/* 需求2: 帮助按钮 — 放在 ControlPanel 上方偏右 */}
+        <Panel position="bottom-right" style={{ margin: 0, zIndex: 99, pointerEvents: 'none' }}>
+            <div style={{ position: 'fixed', bottom: 'calc(20px + 200px)', right: '28px', pointerEvents: 'all' }}>
+                <div style={{ position: 'relative' }}>
+                    <button
+                        className="task-graph-help-btn"
+                        onClick={() => setShowHelp(prev => !prev)}
+                        title="Help / 使用说明"
+                    >
+                        ?
+                    </button>
+                    {showHelp && <HelpPanel onClose={() => setShowHelp(false)} />}
+                </div>
+            </div>
+        </Panel>
       </ReactFlow>
 
       {editTarget && (
@@ -821,7 +1013,9 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   );
 };
 
-const TaskGraphWithProvider = ({ plugin }: { plugin: TaskGraphPlugin }) => { return ( <ReactFlowProvider> <TaskGraphComponent plugin={plugin} /> </ReactFlowProvider> ); };
+// ...existing code... (TaskGraphWithProvider, TaskGraphView class stay the same)
+
+const TaskGraphWithProvider = ({ plugin }: { plugin: TaskGraphPlugin }) => { return ( <ReactFlowProvider> <TaskGraphComponent plugin={plugin} /></ReactFlowProvider> ); };
 export class TaskGraphView extends ItemView {
   plugin: TaskGraphPlugin; root: Root | null = null;
   constructor(leaf: WorkspaceLeaf, plugin: TaskGraphPlugin) { super(leaf); this.plugin = plugin; }

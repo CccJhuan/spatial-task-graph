@@ -10,3 +10,143 @@ If your plugin does not need CSS, delete this file.
     --task-node-bg: var(--background-secondary);
     --task-node-border: var(--background-modifier-border);
 }
+
+/* 需求3: 选中节点 — 增强边框和光晕 */
+.react-flow__node.selected .task-node-wrapper,
+.react-flow__node.selected .text-node-wrapper {
+    border: 2.5px solid var(--interactive-accent) !important;
+    box-shadow: 0 0 0 4px rgba(var(--interactive-accent-rgb), 0.25),
+                0 0 16px rgba(var(--interactive-accent-rgb), 0.15) !important;
+}
+
+/* 需求3: 拖动节点 — 更显眼的高亮 + 抬起效果 */
+.react-flow__node.dragging .task-node-wrapper,
+.react-flow__node.dragging .text-node-wrapper {
+    border: 3px solid var(--text-accent) !important;
+    box-shadow: 0 0 0 5px rgba(var(--interactive-accent-rgb), 0.35),
+                0 8px 24px rgba(0, 0, 0, 0.25) !important;
+    z-index: 1000 !important;
+}
+
+/* 需求2: 确保选中状态下 checkbox 仍然可点击 */
+.react-flow__node.selected .custom-checkbox,
+.react-flow__node .custom-checkbox {
+    pointer-events: all !important;
+    position: relative;
+    z-index: 30;
+    cursor: pointer !important;
+}
+
+/* 需求2: 帮助按钮 */
+.task-graph-help-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--background-secondary);
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border);
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    transition: all 0.15s ease;
+}
+
+.task-graph-help-btn:hover {
+    background: var(--interactive-accent);
+    color: white;
+    border-color: var(--interactive-accent);
+    transform: scale(1.08);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+/* 需求2: 帮助面板 */
+.task-graph-help-panel {
+    position: absolute;
+    bottom: 44px;
+    right: 0;
+    width: 320px;
+    max-height: 420px;
+    overflow-y: auto;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-normal);
+    z-index: 200;
+}
+
+.task-graph-help-panel h3 {
+    margin: 0 0 10px 0;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.task-graph-help-panel h4 {
+    margin: 14px 0 4px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-accent);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.task-graph-help-panel ul {
+    margin: 4px 0;
+    padding-left: 18px;
+}
+
+.task-graph-help-panel li {
+    margin-bottom: 3px;
+}
+
+.task-graph-help-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.task-graph-help-close:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.task-graph-help-lang-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    background: var(--background-secondary);
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--background-modifier-border);
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+.task-graph-help-lang-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.task-graph-help-lang-btn.active {
+    background: var(--interactive-accent);
+    color: white;
+}
