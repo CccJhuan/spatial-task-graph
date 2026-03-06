@@ -1,20 +1,33 @@
 import { Plugin, WorkspaceLeaf, TFile, debounce, Notice } from 'obsidian';
+import type { Edge, Viewport } from 'reactflow';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
 import { TaskGraphSettingTab } from './settings';
 
 export interface TextNodeData { id: string; text: string; x: number; y: number; }
 
+export interface TaskCacheItem {
+    id: string;
+    text: string;
+    notes: string;
+    status: string;
+    file: string;
+    path: string;
+    line: number;
+    endLine: number;
+    rawText: string;
+}
+
 export interface GraphBoard {
 	id: string; name: string;
-	filters: { tags: string[]; excludeTags: string[]; folders: string[]; status: string[]; };
-	data: { layout: Record<string, { x: number, y: number }>; edges: any[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: { x: number; y: number; zoom: number }; }
+	filters: { tags: string[]; excludeTags: string[]; folders: string[]; status: string[]; tagMode?: 'AND' | 'OR'; };
+	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; }
 }
 
 interface TaskGraphSettings { boards: GraphBoard[]; lastActiveBoardId: string; }
 
 const DEFAULT_BOARD: GraphBoard = {
-	id: 'default', name: 'Main Board',
-	filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'] },
+	id: 'default', name: 'Main board',
+	filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'], tagMode: 'OR' },
 	data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] }
 };
 const DEFAULT_SETTINGS: TaskGraphSettings = { boards: [DEFAULT_BOARD], lastActiveBoardId: 'default' };
@@ -23,7 +36,7 @@ export default class TaskGraphPlugin extends Plugin {
 	settings: TaskGraphSettings;
 	viewRefresh?: () => void;
     
-    taskCache: Map<string, any[]> = new Map();
+    taskCache: Map<string, TaskCacheItem[]> = new Map();
     isCacheInitialized: boolean = false;
 
 	debouncedRefresh = debounce(() => {
@@ -36,19 +49,16 @@ export default class TaskGraphPlugin extends Plugin {
         this.addSettingTab(new TaskGraphSettingTab(this.app, this));
 
 		this.registerView(VIEW_TYPE_TASK_GRAPH, (leaf) => new TaskGraphView(leaf, this));
-		this.addRibbonIcon('network', 'Open Task Graph', () => { this.activateView(); });
+		this.addRibbonIcon('network', 'Open task graph', () => { void this.activateView(); });
 		
-        // 注册打开视图的命令
-        this.addCommand({ id: 'open-task-graph', name: 'Open Task Graph', callback: () => { this.activateView(); } });
+        this.addCommand({ id: 'open-task-graph', name: 'Open task graph', callback: () => { void this.activateView(); } });
 
-        // 【全新升级】：注册全局自动排版快捷键入口
         this.addCommand({ 
             id: 'layout-task-graph', 
-            name: 'Auto-layout Task Graph (Smart Arrange)', 
+            name: 'Auto-layout task graph (smart arrange)', 
             callback: () => { 
                 const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_TASK_GRAPH);
                 if (leaves.length > 0) {
-                    // 【核心修复】：将索引访问提取为变量，并进行显式真值校验，完美消除 TS 严格模式报错
                     const firstLeaf = leaves[0];
                     if (firstLeaf) {
                         const view = firstLeaf.view as TaskGraphView;
@@ -59,7 +69,7 @@ export default class TaskGraphPlugin extends Plugin {
                         }
                     }
                 } else {
-                    new Notice("Task Graph is not open.");
+                    new Notice("Task graph is not open.");
                 }
             } 
         });
@@ -110,21 +120,51 @@ export default class TaskGraphPlugin extends Plugin {
 
         const content = await this.app.vault.cachedRead(file);
         const lines = content.split('\n');
-        const tasks: any[] = [];
+        const tasks: TaskCacheItem[] = [];
 
-        for (const item of cache.listItems) {
-            if (!item.task) continue;
+        for (let i = 0; i < cache.listItems.length; i++) {
+            const item = cache.listItems[i];
+            if (!item || !item.task) continue;
             
-            const lineText = lines[item.position.start.line];
-            if (lineText === undefined) continue;
+            const startLine = item.position.start.line;
+            let endLine = item.position.end.line;
+
+            for (let j = i + 1; j < cache.listItems.length; j++) {
+                const nextItem = cache.listItems[j];
+                if (nextItem && nextItem.position.start.line <= endLine) {
+                    endLine = nextItem.position.start.line - 1;
+                    break;
+                } else {
+                    break; 
+                }
+            }
+
+            const rawLineText = lines[startLine];
+            if (rawLineText === undefined) continue;
+
+            let notesText = "";
+            if (endLine > startLine) {
+                const notesLines = lines.slice(startLine + 1, endLine + 1);
+                let minIndent = Infinity;
+                for (const nl of notesLines) {
+                    if (nl.trim().length === 0) continue;
+                    const match = nl.match(/^\s*/);
+                    if (match) minIndent = Math.min(minIndent, match[0].length);
+                }
+                if (minIndent < Infinity) {
+                    notesText = notesLines.map(nl => nl.length >= minIndent ? nl.substring(minIndent) : nl).join('\n');
+                } else {
+                    notesText = notesLines.join('\n');
+                }
+            }
 
             let stableId = "";
-            const blockIdMatch = lineText.match(/\s\^([a-zA-Z0-9\-]+)$/);
+            const blockIdMatch = rawLineText.match(/\s\^([a-zA-Z0-9-]+)$/);
             
             if (blockIdMatch && blockIdMatch[1]) {
                 stableId = `${file.path}::^${blockIdMatch[1]}`; 
             } else {
-                const baseText = lineText.replace(/- \[[x\s\/bc!-]\]\s/, '').trim();
+                const baseText = rawLineText.replace(/- \[[x\s/bc!-]\]\s/, '').trim();
                 const cleanText = baseText.replace(/ ✅ \d{4}-\d{2}-\d{2}/, '').trim();
                 const textHash = cleanText.substring(0, 30).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
                 stableId = `${file.path}::#${textHash}`; 
@@ -136,16 +176,18 @@ export default class TaskGraphPlugin extends Plugin {
                 }
             }
 
-            const displayText = lineText.replace(/- \[[x\s\/bc!-]\]\s/, '').replace(/\s\^([a-zA-Z0-9\-]+)$/, '').trim();
+            const displayText = rawLineText.replace(/- \[[x\s/bc!-]\]\s/, '').replace(/\s\^([a-zA-Z0-9-]+)$/, '').trim();
 
             tasks.push({
                 id: stableId,
                 text: displayText,
+                notes: notesText,
                 status: item.task,
                 file: file.basename,
                 path: file.path,
-                line: item.position.start.line,
-                rawText: lineText
+                line: startLine,
+                endLine: endLine,
+                rawText: rawLineText
             });
         }
 
@@ -158,7 +200,9 @@ export default class TaskGraphPlugin extends Plugin {
 	onunload() { }
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        // 使用类型断言将 any 显式收敛为我们的目标类型
+        const loadedData = (await this.loadData()) as Partial<TaskGraphSettings> | null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData);
 		if (!this.settings.boards || this.settings.boards.length === 0) {
 			this.settings.boards = [DEFAULT_BOARD];
 		}
@@ -184,12 +228,14 @@ export default class TaskGraphPlugin extends Plugin {
                 await leaf.setViewState({ type: VIEW_TYPE_TASK_GRAPH, active: true });
             }
         }
-		if (leaf) workspace.revealLeaf(leaf);
+        // 增加 await 关键字以显式处理 Promise
+		if (leaf) await workspace.revealLeaf(leaf);
 	}
 
 	async ensureBlockId(boardId: string, taskId: string): Promise<string> {
 		if (taskId.includes('::^')) return taskId; 
-		const [filePath] = taskId.split('::#');
+		const parts = taskId.split('::#');
+		const filePath = parts[0];
 		if (!filePath) return taskId;
 
 		const file = this.app.vault.getAbstractFileByPath(filePath);
@@ -201,7 +247,7 @@ export default class TaskGraphPlugin extends Plugin {
 			
 			const content = await this.app.vault.read(file);
 			const lines = content.split('\n');
-			const targetTaskObj = (await this.getTasks(boardId)).find(t => t.id === taskId);
+			const targetTaskObj = this.getTasks(boardId).find(t => t.id === taskId);
 			if (!targetTaskObj) return taskId;
 
 			const lineNumber = targetTaskObj.line;
@@ -213,37 +259,49 @@ export default class TaskGraphPlugin extends Plugin {
 			await this.app.vault.modify(file, lines.join('\n'));
 			
 			return `${filePath}::^${randomBlockId}`;
-		} catch(e) { 
-            console.error("TaskGraph Plugin Error ensuring block ID:", e);
+		} catch(err) { 
+            console.error("TaskGraph Plugin Error ensuring block ID:", err);
             return taskId; 
         }
 	}
 
-	async updateTaskContent(filePath: string, lineNumber: number, newText: string) {
+	async updateTaskContent(filePath: string, startLine: number, endLine: number, newText: string) {
 		const file = this.app.vault.getAbstractFileByPath(filePath);
 		if (!(file instanceof TFile)) return;
 		try {
 			const content = await this.app.vault.read(file);
 			const lines = content.split('\n');
-			if (lineNumber >= lines.length) return;
+			if (startLine >= lines.length) return;
 			
-			const originalLine = lines[lineNumber];
+			const originalLine = lines[startLine];
             if (originalLine === undefined) return; 
 
-            const lineRegex = /^(\s*- \[[x\s\/bc!-]\]\s)?(.*?)(?:\s+(\^[a-zA-Z0-9\-]+))?$/;
+            const lineRegex = /^(\s*- \[[x\s/bc!-]\]\s)?(.*?)(?:\s+(\^[a-zA-Z0-9-]+))?$/;
             const originalMatch = originalLine.match(lineRegex);
 
             const prefix = originalMatch && originalMatch[1] ? originalMatch[1] : '- [ ] ';
             const existingBlockId = originalMatch && originalMatch[3] ? originalMatch[3] : '';
 
-            const cleanNewText = newText.replace(/(?:\s+\^[a-zA-Z0-9\-]+)+$/, '').trim();
+            const newTextLines = newText.split('\n');
+            const firstLine = newTextLines[0] || '';
+            const cleanNewTitle = firstLine.replace(/(?:\s+\^[a-zA-Z0-9-]+)+$/, '').trim();
+            const newNotes = newTextLines.slice(1);
 
             const finalBlockIdStr = existingBlockId ? ` ${existingBlockId}` : '';
-            lines[lineNumber] = `${prefix}${cleanNewText}${finalBlockIdStr}`;
+            const newFirstLine = `${prefix}${cleanNewTitle}${finalBlockIdStr}`;
+
+            const baseIndentMatch = prefix.match(/^\s*/);
+            const baseIndent = baseIndentMatch ? baseIndentMatch[0] : '';
+            const noteIndent = baseIndent + '\t';
+
+            const formattedNotes = newNotes.map(n => n.trim() === '' ? '' : `${noteIndent}${n.trim()}`);
+            const replacement = [newFirstLine, ...formattedNotes];
+
+            lines.splice(startLine, endLine - startLine + 1, ...replacement);
 
 			await this.app.vault.modify(file, lines.join('\n'));
-		} catch (e) { 
-            console.error("TaskGraph Plugin Error updating task content:", e); 
+		} catch (err) { 
+            console.error("TaskGraph Plugin Error updating task content:", err); 
         }
 	}
 
@@ -254,7 +312,7 @@ export default class TaskGraphPlugin extends Plugin {
 			const content = await this.app.vault.read(file);
 			const prefix = content.endsWith('\n') ? '' : '\n';
             
-            const cleanText = taskText.replace(/(?:\s+\^[a-zA-Z0-9\-]+)+$/, '').trim();
+            const cleanText = taskText.replace(/(?:\s+\^[a-zA-Z0-9-]+)+$/, '').trim();
             const randomBlockId = Math.random().toString(36).substring(2, 8);
 			
             const newTaskLine = `- [ ] ${cleanText} ^${randomBlockId}`;
@@ -262,8 +320,8 @@ export default class TaskGraphPlugin extends Plugin {
             await this.app.vault.append(file, `${prefix}${newTaskLine}`);
             
             return `${filePath}::^${randomBlockId}`;
-		} catch (e) { 
-            console.error("TaskGraph Plugin Error appending task:", e);
+		} catch (err) { 
+            console.error("TaskGraph Plugin Error appending task:", err);
             return null; 
         }
 	}
@@ -273,12 +331,7 @@ export default class TaskGraphPlugin extends Plugin {
 		if (boardIndex === -1) return;
         const board = this.settings.boards[boardIndex];
         if (!board) return; 
-		const currentData = board.data;
-		if (data.layout) currentData.layout = data.layout;
-		if (data.edges) currentData.edges = data.edges;
-		if (data.nodeStatus) currentData.nodeStatus = data.nodeStatus;
-		if (data.textNodes) currentData.textNodes = data.textNodes;
-        if (data.viewport) currentData.viewport = data.viewport;
+		board.data = { ...board.data, ...data };
 		await this.saveSettings();
 	}
 
@@ -289,7 +342,7 @@ export default class TaskGraphPlugin extends Plugin {
 		await this.saveSettings();
 	}
 
-	getTasks(boardId: string) {
+	getTasks(boardId: string): TaskCacheItem[] {
         if (!this.isCacheInitialized) return [];
 
 		const board = this.settings.boards.find(b => b.id === boardId) || this.settings.boards[0];
@@ -298,12 +351,12 @@ export default class TaskGraphPlugin extends Plugin {
 		const filters = board.filters;
         
 		const connectedTaskIds = new Set<string>();
-		board.data.edges.forEach((e: any) => {
+		board.data.edges.forEach((e: Edge) => { 
 			connectedTaskIds.add(e.source);
 			connectedTaskIds.add(e.target);
 		});
 
-        const allTasks: any[] = [];
+        const allTasks: TaskCacheItem[] = []; 
 
         for (const [path, fileTasks] of this.taskCache.entries()) {
             
@@ -317,7 +370,7 @@ export default class TaskGraphPlugin extends Plugin {
                 if (!isConnected && filters.status.length > 0 && !filters.status.includes(t.status)) continue;
                 
                 if (filters.tags.length > 0) {
-                    const tagMode = (filters as any).tagMode || 'OR';
+                    const tagMode = filters.tagMode || 'OR';
                     if (tagMode === 'OR') {
                         if (!filters.tags.some(tag => t.rawText.includes(tag))) continue;
                     } else {

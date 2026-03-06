@@ -1,6 +1,6 @@
 import { PluginSettingTab, Setting } from "obsidian";
-import type { App } from "obsidian"; // 修复 3: 使用 type 导入
-import SpatialTaskGraphPlugin from "./main"; // 确保与 main.ts 里的类名一致
+import type { App } from "obsidian"; 
+import SpatialTaskGraphPlugin from "./main"; 
 
 export class TaskGraphSettingTab extends PluginSettingTab {
     plugin: SpatialTaskGraphPlugin;
@@ -15,20 +15,13 @@ export class TaskGraphSettingTab extends PluginSettingTab {
 
         containerEl.empty();
 
-        // 修复 4: 使用官方标准 API 生成标题，取代 createEl('h2')
         new Setting(containerEl)
-            .setName('Spatial Task Graph Settings')
-            .setHeading();
-
-        // 示例设置项：你可以根据需要修改或添加
-        new Setting(containerEl)
-            .setName('Plugin Information')
-            .setDesc('Visualize your Obsidian tasks on an infinite canvas.')
-            .addButton(btn => btn
-                .setButtonText('View Documentation')
-                .onClick(() => {
-                    window.open('https://github.com/CccJhuan/obsidian-spatial-task-graph');
+            .setName('Enable advanced features')
+            .setDesc('Turn on to enable experimental task graph features.')
+            .addToggle(toggle => toggle
+                .setValue(true)
+                .onChange(async (value) => {
+                    await this.plugin.saveSettings();
                 }));
-
     }
 }
