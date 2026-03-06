@@ -317,10 +317,10 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
     loadData();
   }, [plugin, activeBoardId, refreshKey]);
 
-  const onConnectStart = React.useCallback((event: any, params: any) => { connectionStartRef.current = params; connectionMadeRef.current = false; }, []);
-  const onConnectEnd = React.useCallback((event: any) => {
+  const onConnectStart = React.useCallback((event: React.MouseEvent | React.TouchEvent, params: any) => { connectionStartRef.current = params; connectionMadeRef.current = false; }, []);
+  const onConnectEnd = React.useCallback((event: MouseEvent | TouchEvent) => {
       if (connectionMadeRef.current) return;
-      const targetIsPane = event.target.classList.contains('react-flow__pane');
+      const targetIsPane = (event.target as HTMLElement).classList.contains('react-flow__pane');
       if (targetIsPane && connectionStartRef.current.nodeId) {
           const sourceNodeId = connectionStartRef.current.nodeId;
           const sourceNode = nodes.find(n => n.id === sourceNodeId);
@@ -353,7 +353,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
            let currentLineText = lines[line]; 
            if (currentLineText === undefined) return;
 
-           const lineRegex = /^(\s*- \[[x\s\/bc!-]\]\s)(.*?)(?:\s+(\^[a-zA-Z0-9\-]+))?$/;
+           const lineRegex = /^(\s*- \[[x\s/bc!-]\]\s)(.*?)(?:\s+(\^[a-zA-Z0-9-]+))?$/;
            const match = currentLineText.match(lineRegex);
 
            if (match) {
@@ -435,7 +435,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           
           const board = plugin.settings.boards.find(b => b.id === activeBoardId);
           if (board) { 
-              if (!board.data.edges.some((e:any) => e.id === newEdge.id)) {
+              if (!board.data.edges.some((e: Edge) => e.id === newEdge.id)) {
                   board.data.edges.push(newEdge);
               }
               await plugin.saveSettings(); 
@@ -444,7 +444,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       })();
   }, [plugin, activeBoardId, setEdges, setNodes]);
 
-  const onNodeDragStop = React.useCallback((event: any, node: Node) => { 
+  const onNodeDragStop = React.useCallback((event: React.MouseEvent, node: Node) => { 
       setNodes((nds) => nds.map(n => n.id === node.id ? node : n)); 
       const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
       if(!board) return; 
@@ -465,10 +465,10 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 
   const onPaneContextMenu = React.useCallback((event: React.MouseEvent) => {
       event.preventDefault(); const menu = new Menu();
-      menu.addItem((item) => item.setTitle('Add Note').setIcon('sticky-note').onClick(() => {
+      menu.addItem((item) => item.setTitle('Add note').setIcon('sticky-note').onClick(() => {
           void (async () => {
               const bounds = (event.target as HTMLElement).getBoundingClientRect(); const position = reactFlowInstance.project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
-              const newNode = { id: `text-${Date.now()}`, text: 'New Note', x: position.x, y: position.y };
+              const newNode = { id: `text-${Date.now()}`, text: 'New note', x: position.x, y: position.y };
               const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = [...(board.data.textNodes || []), newNode]; await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey(prev => prev + 1); }
           })();
       }));
@@ -482,7 +482,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           void plugin.saveBoardData(activeBoardId, { edges: newEdges }); 
           return newEdges; 
       }); 
-      new Notice("Connection removed"); 
+      new Notice("Connection removed."); 
   }, [plugin, activeBoardId, setEdges]);
   
   const onNodeContextMenu = React.useCallback((event: React.MouseEvent, node: Node) => {
@@ -490,11 +490,11 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       if (node.type === 'task') {
           menu.addItem((item) => item.setTitle('⚪ Backlog').onClick(() => { void updateNodeStatus(node.id, 'backlog'); }));
           menu.addItem((item) => item.setTitle('🟡 Pending').onClick(() => { void updateNodeStatus(node.id, 'pending'); }));
-          menu.addItem((item) => item.setTitle('🟢 In Progress').onClick(() => { void updateNodeStatus(node.id, 'in_progress'); }));
+          menu.addItem((item) => item.setTitle('🟢 In progress').onClick(() => { void updateNodeStatus(node.id, 'in_progress'); }));
           menu.addItem((item) => item.setTitle('🔴 Blocked').onClick(() => { void updateNodeStatus(node.id, 'blocked'); }));
           menu.addItem((item) => item.setTitle('🟣 Finished').onClick(() => { void updateNodeStatus(node.id, 'finished'); }));
       } else if (node.type === 'text') {
-          menu.addItem((item) => item.setTitle('🗑 Delete Note').onClick(() => { 
+          menu.addItem((item) => item.setTitle('🗑 Delete note').onClick(() => { 
               void (async () => {
                   const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
                   if (board) { 
@@ -694,7 +694,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes });
       }
 
-      new Notice("Smart layout applied!");
+      new Notice("Smart layout applied.");
       
       const activeNodesToFocus = nodes.filter(n => { if (n.type === 'task') return !(n.data.status === 'x' || n.data.customStatus === 'finished'); return false; });
       const nodesToFit = activeNodesToFocus.length > 0 ? activeNodesToFocus : nodes;
