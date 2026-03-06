@@ -17,14 +17,10 @@ import ReactFlow, {
   SelectionMode,
   ConnectionLineType
 } from 'reactflow';
-// 移除这行无用的 import，因为 Obsidian 的 esbuild 默认不处理 node_modules 里的 css 导入
-// import 'reactflow/dist/style.css'; 
 
 import TaskGraphPlugin, { GraphBoard } from './main';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
-
-// 移除 REACT_FLOW_CORE_STYLES 和 CUSTOM_STYLES 两个庞大的字符串变量
 
 const STATUS_COLORS = { 'in_progress': '#34c759', 'pending': '#ff9500', 'finished': '#af52de', 'blocked': '#ff3b30', 'backlog': '#8e8e93', 'default': 'var(--text-muted)' };
 const extractTags = (text: string) => { if (!text) return { tags: [], cleanText: '' }; const tagRegex = /#[\w\u4e00-\u9fa5]+(\/[\w\u4e00-\u9fa5]+)*/g; const tags = text.match(tagRegex) || []; const cleanText = text.replace(tagRegex, '').trim(); return { tags, cleanText }; };
@@ -43,13 +39,13 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
             <div className="edit-btn" onClick={(e) => { e.stopPropagation(); data.onEdit(data); }} title="Edit Task">✎</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-            {/* 之前修复过的 Div 代理点击方案 */}
+            {/* 修复 8: void 显式接管 Promise */}
             <div 
                 className="nodrag" 
                 onMouseDown={(e) => e.stopPropagation()} 
                 onClick={(e) => {
                     e.stopPropagation();
-                    data.onToggleStatus(data.id, data.status, data.path, data.line); 
+                    void data.onToggleStatus(data.id, data.status, data.path, data.line); 
                 }}
                 style={{ display: 'flex', alignItems: 'center', marginTop: '3px', cursor: 'pointer' }}
             >
@@ -75,7 +71,7 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
 
 const TextNode = React.memo(({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
     const [text, setText] = React.useState(data.label);
-    const handleBlur = () => { if (text !== data.label) data.onSave(data.id, text); };
+    const handleBlur = () => { if (text !== data.label) void data.onSave(data.id, text); }; // 修复 8
     const rows = Math.max(1, text.split('\n').length);
     const stopKeys = (e: React.KeyboardEvent) => e.stopPropagation();
 
@@ -91,7 +87,7 @@ const TextNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
 
 const nodeTypes = { task: TaskNode, text: TextNode };
 
-const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText: string, onClose: () => void, onSave: (text: string) => void, allTags: string[] }) => {
+const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText: string, onClose: () => void, onSave: (text: string) => void | Promise<void>, allTags: string[] }) => {
     const [text, setText] = React.useState(initialText);
     const [suggestions, setSuggestions] = React.useState<string[]>([]);
     const [suggestionPos, setSuggestionPos] = React.useState({ top: 0, left: 0 });
@@ -104,7 +100,9 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
     };
     const insertTag = (tag: string) => { const cursorPos = textareaRef.current?.selectionStart || text.length; const textBeforeCursor = text.slice(0, cursorPos); const textAfterCursor = text.slice(cursorPos); const lastHashIndex = textBeforeCursor.lastIndexOf('#'); const newText = textBeforeCursor.slice(0, lastHashIndex) + '#' + tag + ' ' + textAfterCursor; setText(newText); setSuggestions([]); textareaRef.current?.focus(); };
     const insertMetadata = (symbol: string) => { const newText = text + ` ${symbol} `; setText(newText); textareaRef.current?.focus(); };
-    const handleKeyDown = (e: React.KeyboardEvent) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSave(text); } };
+    
+    // 修复 8: void wrapped Promise
+    const handleKeyDown = (e: React.KeyboardEvent) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void onSave(text); } };
 
     return (
         <div className="edit-overlay" onClick={onClose}>
@@ -124,14 +122,13 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
                     <div className="metadata-btn" onClick={() => insertMetadata('🔼')} title="Medium Priority">🔼</div>
                     <div className="metadata-btn" onClick={() => insertMetadata('🔽')} title="Low Priority">🔽</div>
                 </div>
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: 'auto' }}><button onClick={onClose} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--background-modifier-border)', background: 'transparent', color: 'var(--text-normal)' }}>Cancel</button><button onClick={() => onSave(text)} style={{ padding: '6px 16px', borderRadius: '6px', border: 'none', background: 'var(--interactive-accent)', color: 'white', fontWeight: 500 }}>Save</button></div>
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: 'auto' }}><button onClick={onClose} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--background-modifier-border)', background: 'transparent', color: 'var(--text-normal)' }}>Cancel</button><button onClick={() => { void onSave(text); }} style={{ padding: '6px 16px', borderRadius: '6px', border: 'none', background: 'var(--interactive-accent)', color: 'white', fontWeight: 500 }}>Save</button></div>
             </div>
         </div>
     );
 };
 
-// 【修复缺失】：补全确认弹窗组件的定义
-const ConfirmModal = ({ message, onConfirm, onClose }: { message: string, onConfirm: () => void, onClose: () => void }) => {
+const ConfirmModal = ({ message, onConfirm, onClose }: { message: string, onConfirm: () => void | Promise<void>, onClose: () => void }) => {
     return (
         <div className="edit-overlay" onClick={onClose}>
             <div className="edit-modal" style={{ width: '320px', alignItems: 'center', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
@@ -139,14 +136,14 @@ const ConfirmModal = ({ message, onConfirm, onClose }: { message: string, onConf
                 <p style={{ color: 'var(--text-muted)', marginBottom: '20px', fontSize: '14px' }}>{message}</p>
                 <div style={{ display: 'flex', gap: '12px', width: '100%', justifyContent: 'center' }}>
                     <button onClick={onClose} style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid var(--background-modifier-border)', background: 'transparent', color: 'var(--text-normal)', cursor: 'pointer' }}>Cancel</button>
-                    <button onClick={() => { onConfirm(); onClose(); }} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: 'var(--interactive-accent)', color: 'white', fontWeight: 500, cursor: 'pointer' }}>Confirm</button>
+                    <button onClick={() => { void onConfirm(); onClose(); }} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: 'var(--interactive-accent)', color: 'white', fontWeight: 500, cursor: 'pointer' }}>Confirm</button>
                 </div>
             </div>
         </div>
     );
 };
 
-const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange }: { nodes: Node[], onNodeCenter: (nodeId: string) => void, onStatusChange: (id: string, status: string) => void }) => {
+const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange }: { nodes: Node[], onNodeCenter: (nodeId: string) => void, onStatusChange: (id: string, status: string) => Promise<void> }) => {
     const tasks = nodes.filter(n => n.type === 'task');
     const inProgress = tasks.filter(n => n.data.customStatus === 'in_progress');
     const pending = tasks.filter(n => n.data.customStatus === 'pending');
@@ -155,7 +152,7 @@ const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange }: { nodes: Node[], o
 
     const handleDragStart = (e: React.DragEvent, nodeId: string) => { e.dataTransfer.setData('nodeId', nodeId); e.dataTransfer.effectAllowed = 'move'; };
     const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
-    const handleDrop = (e: React.DragEvent, targetStatus: string) => { e.preventDefault(); const nodeId = e.dataTransfer.getData('nodeId'); if (nodeId) onStatusChange(nodeId, targetStatus); };
+    const handleDrop = (e: React.DragEvent, targetStatus: string) => { e.preventDefault(); const nodeId = e.dataTransfer.getData('nodeId'); if (nodeId) void onStatusChange(nodeId, targetStatus); }; // 修复 8
 
     const renderList = (title: string, items: Node[], color: string, className: string, statusKey: string) => (
         <div className="sidebar-section" onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, statusKey)}>
@@ -175,29 +172,24 @@ const GraphToolbar = () => {
     const { zoomIn, zoomOut, fitView } = useReactFlow();
     const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
     const btnStyle: React.CSSProperties = { width: '32px', height: '32px', background: 'var(--background-secondary)', border: '1px solid var(--background-modifier-border)', color: 'var(--text-normal)', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', marginBottom: '8px' };
-    return (<Panel position="top-right" style={{ margin: '10px', display: 'flex', flexDirection: 'column', pointerEvents: 'all' }} onMouseDown={stopPropagation}><button style={btnStyle} onClick={() => zoomIn()} title="Zoom In"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button><button style={btnStyle} onClick={() => zoomOut()} title="Zoom Out"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg></button><button style={btnStyle} onClick={() => fitView({duration: 800})} title="Fit View"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg></button></Panel>);
+    return (<Panel position="top-right" style={{ margin: '10px', display: 'flex', flexDirection: 'column', pointerEvents: 'all' }} onMouseDown={stopPropagation}><button style={btnStyle} onClick={() => { zoomIn(); }} title="Zoom In"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button><button style={btnStyle} onClick={() => { zoomOut(); }} title="Zoom Out"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg></button><button style={btnStyle} onClick={() => { fitView({duration: 800}); }} title="Fit View"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg></button></Panel>);
 };
 
-const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRenameBoard, onDeleteBoard, onAutoLayout, onResetView, currentBoard, onUpdateFilter }: any) => {
+const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRenameBoard, onDeleteBoard, onAutoLayout, onResetView, currentBoard, onUpdateFilter, onRequestConfirm }: any) => {
     const [showFilters, setShowFilters] = React.useState(false);
     const [isRenaming, setIsRenaming] = React.useState(false);
     const [tempName, setTempName] = React.useState('');
     React.useEffect(() => { setIsRenaming(false); setTempName(currentBoard?.name || ''); }, [currentBoard]);
-    const handleSaveName = () => { if (tempName.trim()) onRenameBoard(tempName); setIsRenaming(false); };
     
-    // 微优化：为了防范未来可能出现的 UI 锁死，我们用 setTimeout 将 window.confirm 移出主同步线程
+    // 修复 8
+    const handleSaveName = () => { if (tempName.trim()) void onRenameBoard(tempName); setIsRenaming(false); };
+    
     const handleDelete = () => { 
         if (boards.length <= 1) { new Notice("Cannot delete the only board."); return; } 
-        setTimeout(() => {
-            if (window.confirm(`Delete board "${currentBoard?.name || 'Board'}"?`)) onDeleteBoard(activeBoardId);
-        }, 10);
+        onRequestConfirm(`Delete board "${currentBoard?.name || 'Board'}"?`, () => { void onDeleteBoard(activeBoardId); });
     };
 
-    const handleResetClick = () => {
-        setTimeout(() => {
-            onResetView();
-        }, 10);
-    };
+    const handleResetClick = () => { onResetView(); };
 
     const stopPropagation = (e: React.MouseEvent | React.KeyboardEvent) => { e.stopPropagation(); };
     const stopKeys = (e: React.KeyboardEvent) => e.stopPropagation();
@@ -206,7 +198,7 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     const activeBtnStyle = { ...btnStyle, background: 'var(--interactive-accent)', color: 'white', border: 'none', boxShadow: '0 2px 8px rgba(var(--interactive-accent-rgb), 0.3)' };
     const inputStyle = { background: 'var(--background-modifier-form-field)', border: 'none', color: 'var(--text-normal)', padding: '8px', borderRadius: '8px', width: '100%', marginBottom: '8px', fontSize: '12px' };
     
-    return (<Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '20px', margin: 0, background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '300px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={onAddBoard} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={onAutoLayout}>⚡ Layout</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleResetClick}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}><input style={inputStyle} placeholder="Filter Tags..." value={currentBoard.filters.tags.join(', ')} onChange={(e) => onUpdateFilter('tags', e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} /><input style={inputStyle} placeholder="Filter Path..." value={currentBoard.filters.folders.join(', ')} onChange={(e) => onUpdateFilter('folders', e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} /><div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>{[' ', '/', 'x'].map(status => (<label key={status} style={{fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-normal)'}}><input type="checkbox" className="filter-checkbox" checked={currentBoard.filters.status.includes(status)} onChange={() => onUpdateFilter('status', status)} /> {status === ' ' ? 'Todo' : status === '/' ? 'Doing' : 'Done'}</label>))}</div></div>)}</Panel>);
+    return (<Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '20px', margin: 0, background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '300px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={() => void onAddBoard()} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={() => void onAutoLayout()}>⚡ Layout</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleResetClick}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}><input style={inputStyle} placeholder="Filter Tags..." value={currentBoard.filters.tags.join(', ')} onChange={(e) => { void onUpdateFilter('tags', e.target.value); }} onKeyDown={stopKeys} onKeyUp={stopKeys} /><input style={inputStyle} placeholder="Filter Path..." value={currentBoard.filters.folders.join(', ')} onChange={(e) => { void onUpdateFilter('folders', e.target.value); }} onKeyDown={stopKeys} onKeyUp={stopKeys} /><div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>{[' ', '/', 'x'].map(status => (<label key={status} style={{fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-normal)'}}><input type="checkbox" className="filter-checkbox" checked={currentBoard.filters.status.includes(status)} onChange={() => { void onUpdateFilter('status', status); }} /> {status === ' ' ? 'Todo' : status === '/' ? 'Doing' : 'Done'}</label>))}</div></div>)}</Panel>);
 };
 
 const HelpPanel = ({ onClose }: { onClose: () => void }) => {
@@ -269,14 +261,11 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
   const [allTags, setAllTags] = React.useState<string[]>([]);
   const [showHelp, setShowHelp] = React.useState(false); 
-  // 【新增】接管所有敏感操作的确认弹窗状态
   const [confirmReq, setConfirmReq] = React.useState<{ message: string, action: () => void } | null>(null);
   
   const reactFlowInstance = useReactFlow();
   const connectionStartRef = React.useRef<{ nodeId: string | null; handleType: string | null }>({ nodeId: null, handleType: null });
   const connectionMadeRef = React.useRef(false);
-  
-  // 核心改动：彻底删除了动态插入 <style> 的 useEffect 逻辑
 
   const activeBoard = plugin.settings.boards.find(b => b.id === activeBoardId) || plugin.settings.boards[0];
 
@@ -286,11 +275,14 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   }, []);
 
   React.useEffect(() => {
-    const loadData = async () => {
+    // 修复 5: 因为 plugin.getTasks 已经是同步函数，这里无需 async 和 await
+    const loadData = () => {
       // @ts-ignore
       const tags: Record<string, number> = plugin.app.metadataCache.getTags();
       setAllTags(Object.keys(tags).map(t => t.replace('#', '')));
-      const tasks = await plugin.getTasks(activeBoardId);
+      
+      const tasks = plugin.getTasks(activeBoardId);
+      
       const boardConfig = plugin.settings.boards.find(b => b.id === activeBoardId);
       const savedLayout = boardConfig?.data.layout || {};
       const savedEdges = boardConfig?.data.edges || [];
@@ -391,7 +383,16 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       }
   };
 
-  const updateNodeStatus = async (nodeId: string, status: string) => { setNodes((nds) => nds.map((n) => { if (n.id === nodeId) return { ...n, data: { ...n.data, customStatus: status } }; return n; })); const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const nodeStatus = (board.data as any).nodeStatus || {}; nodeStatus[nodeId] = status; await plugin.saveBoardData(activeBoardId, { nodeStatus } as any); } };
+  // 修复 9: 删除画蛇添足的 as any 断言
+  const updateNodeStatus = async (nodeId: string, status: string) => { 
+      setNodes((nds) => nds.map((n) => { if (n.id === nodeId) return { ...n, data: { ...n.data, customStatus: status } }; return n; })); 
+      const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
+      if (board) { 
+          const nodeStatus = board.data.nodeStatus || {}; 
+          nodeStatus[nodeId] = status; 
+          await plugin.saveBoardData(activeBoardId, { nodeStatus }); 
+      } 
+  };
 
   const handleCreateTask = async (text: string) => {
       if (!createTarget) return;
@@ -406,38 +407,41 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       }
   };
 
-  const onConnect = React.useCallback(async (params: Connection) => { 
-      connectionMadeRef.current = true; 
-      if (!params.source || !params.target) return;
+  // 修复 8: ReactFlow 的 onConnect 只能传 void 签名的函数
+  const onConnect = React.useCallback((params: Connection) => { 
+      void (async () => {
+          connectionMadeRef.current = true; 
+          if (!params.source || !params.target) return;
 
-      const newSourceId = await plugin.ensureBlockId(activeBoardId, params.source);
-      const newTargetId = await plugin.ensureBlockId(activeBoardId, params.target);
+          const newSourceId = await plugin.ensureBlockId(activeBoardId, params.source);
+          const newTargetId = await plugin.ensureBlockId(activeBoardId, params.target);
 
-      const newEdge = { id: `e${newSourceId}-${newTargetId}`, source: newSourceId, target: newTargetId, animated: true };
+          const newEdge = { id: `e${newSourceId}-${newTargetId}`, source: newSourceId, target: newTargetId, animated: true };
 
-      setNodes(nds => nds.map(n => {
-          if (n.id === params.source) return { ...n, id: newSourceId };
-          if (n.id === params.target) return { ...n, id: newTargetId };
-          return n;
-      }));
+          setNodes(nds => nds.map(n => {
+              if (n.id === params.source) return { ...n, id: newSourceId };
+              if (n.id === params.target) return { ...n, id: newTargetId };
+              return n;
+          }));
 
-      setEdges((eds) => {
-          const updatedEds = eds.map(e => {
-              let eSource = e.source === params.source ? newSourceId : (e.source === params.target ? newTargetId : e.source);
-              let eTarget = e.target === params.source ? newSourceId : (e.target === params.target ? newTargetId : e.target);
-              return { ...e, source: eSource, target: eTarget, id: `e${eSource}-${eTarget}` };
-          });
-          return addEdge(newEdge, updatedEds);
-      }); 
-      
-      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
-      if (board) { 
-          if (!board.data.edges.some((e:any) => e.id === newEdge.id)) {
-              board.data.edges.push(newEdge);
+          setEdges((eds) => {
+              const updatedEds = eds.map(e => {
+                  let eSource = e.source === params.source ? newSourceId : (e.source === params.target ? newTargetId : e.source);
+                  let eTarget = e.target === params.source ? newSourceId : (e.target === params.target ? newTargetId : e.target);
+                  return { ...e, source: eSource, target: eTarget, id: `e${eSource}-${eTarget}` };
+              });
+              return addEdge(newEdge, updatedEds);
+          }); 
+          
+          const board = plugin.settings.boards.find(b => b.id === activeBoardId);
+          if (board) { 
+              if (!board.data.edges.some((e:any) => e.id === newEdge.id)) {
+                  board.data.edges.push(newEdge);
+              }
+              await plugin.saveSettings(); 
           }
-          await plugin.saveSettings(); 
-      }
-      setRefreshKey(prev => prev + 1);
+          setRefreshKey(prev => prev + 1);
+      })();
   }, [plugin, activeBoardId, setEdges, setNodes]);
 
   const onNodeDragStop = React.useCallback((event: any, node: Node) => { 
@@ -445,12 +449,13 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
       if(!board) return; 
       
+      // 修复 8: 用 void 处理不处于 async/await 上下文的 Promise 行为
       if (node.type === 'task') { 
           const layout = { ...board.data.layout, [node.id]: node.position }; 
-          plugin.saveBoardData(activeBoardId, { layout }); 
+          void plugin.saveBoardData(activeBoardId, { layout }); 
       } else if (node.type === 'text') { 
           const textNodes = board.data.textNodes.map(tn => tn.id === node.id ? { ...tn, x: node.position.x, y: node.position.y } : tn); 
-          plugin.saveBoardData(activeBoardId, { textNodes }); 
+          void plugin.saveBoardData(activeBoardId, { textNodes }); 
       } 
   }, [plugin, activeBoardId, setNodes]);
   
@@ -460,32 +465,53 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 
   const onPaneContextMenu = React.useCallback((event: React.MouseEvent) => {
       event.preventDefault(); const menu = new Menu();
-      menu.addItem((item) => item.setTitle('Add Note').setIcon('sticky-note').onClick(async () => {
-          const bounds = (event.target as HTMLElement).getBoundingClientRect(); const position = reactFlowInstance.project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
-          const newNode = { id: `text-${Date.now()}`, text: 'New Note', x: position.x, y: position.y };
-          const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = [...(board.data.textNodes || []), newNode]; await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey(prev => prev + 1); }
+      menu.addItem((item) => item.setTitle('Add Note').setIcon('sticky-note').onClick(() => {
+          void (async () => {
+              const bounds = (event.target as HTMLElement).getBoundingClientRect(); const position = reactFlowInstance.project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+              const newNode = { id: `text-${Date.now()}`, text: 'New Note', x: position.x, y: position.y };
+              const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = [...(board.data.textNodes || []), newNode]; await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey(prev => prev + 1); }
+          })();
       }));
       menu.showAtPosition({ x: event.nativeEvent.clientX, y: event.nativeEvent.clientY });
   }, [plugin, activeBoardId, reactFlowInstance]);
 
-  const onEdgeContextMenu = React.useCallback((event: React.MouseEvent, edge: Edge) => { event.preventDefault(); event.stopPropagation(); setEdges((eds) => { const newEdges = eds.filter((e) => e.id !== edge.id); plugin.saveBoardData(activeBoardId, { edges: newEdges }); return newEdges; }); new Notice("Connection removed"); }, [plugin, activeBoardId, setEdges]);
+  const onEdgeContextMenu = React.useCallback((event: React.MouseEvent, edge: Edge) => { 
+      event.preventDefault(); event.stopPropagation(); 
+      setEdges((eds) => { 
+          const newEdges = eds.filter((e) => e.id !== edge.id); 
+          void plugin.saveBoardData(activeBoardId, { edges: newEdges }); 
+          return newEdges; 
+      }); 
+      new Notice("Connection removed"); 
+  }, [plugin, activeBoardId, setEdges]);
   
   const onNodeContextMenu = React.useCallback((event: React.MouseEvent, node: Node) => {
       event.preventDefault(); event.stopPropagation(); const menu = new Menu();
       if (node.type === 'task') {
-          menu.addItem((item) => item.setTitle('⚪ Backlog').onClick(() => updateNodeStatus(node.id, 'backlog')));
-          menu.addItem((item) => item.setTitle('🟡 Pending').onClick(() => updateNodeStatus(node.id, 'pending')));
-          menu.addItem((item) => item.setTitle('🟢 In Progress').onClick(() => updateNodeStatus(node.id, 'in_progress')));
-          menu.addItem((item) => item.setTitle('🔴 Blocked').onClick(() => updateNodeStatus(node.id, 'blocked')));
-          menu.addItem((item) => item.setTitle('🟣 Finished').onClick(() => updateNodeStatus(node.id, 'finished')));
+          menu.addItem((item) => item.setTitle('⚪ Backlog').onClick(() => { void updateNodeStatus(node.id, 'backlog'); }));
+          menu.addItem((item) => item.setTitle('🟡 Pending').onClick(() => { void updateNodeStatus(node.id, 'pending'); }));
+          menu.addItem((item) => item.setTitle('🟢 In Progress').onClick(() => { void updateNodeStatus(node.id, 'in_progress'); }));
+          menu.addItem((item) => item.setTitle('🔴 Blocked').onClick(() => { void updateNodeStatus(node.id, 'blocked'); }));
+          menu.addItem((item) => item.setTitle('🟣 Finished').onClick(() => { void updateNodeStatus(node.id, 'finished'); }));
       } else if (node.type === 'text') {
-          menu.addItem((item) => item.setTitle('🗑 Delete Note').onClick(async () => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = board.data.textNodes.filter(tn => tn.id !== node.id); await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey(prev => prev + 1); } }));
+          menu.addItem((item) => item.setTitle('🗑 Delete Note').onClick(() => { 
+              void (async () => {
+                  const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
+                  if (board) { 
+                      const textNodes = board.data.textNodes.filter(tn => tn.id !== node.id); 
+                      await plugin.saveBoardData(activeBoardId, { textNodes }); 
+                      setRefreshKey(prev => prev + 1); 
+                  }
+              })();
+          }));
       }
       menu.showAtPosition({ x: event.nativeEvent.clientX, y: event.nativeEvent.clientY });
   }, [plugin, activeBoardId, nodes]);
 
-  const handleSwitchBoard = (id: string) => { setActiveBoardId(id); plugin.settings.lastActiveBoardId = id; plugin.saveSettings(); };
-  const handleAddBoard = async () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'] }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
+  const handleSwitchBoard = (id: string) => { setActiveBoardId(id); plugin.settings.lastActiveBoardId = id; void plugin.saveSettings(); };
+  
+  // 修复 10: 剔除冗余的 async
+  const handleAddBoard = () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'] }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
   
   const handleDeleteBoard = async (id: string) => { 
       const newBoards = plugin.settings.boards.filter(b => b.id !== id); 
@@ -501,31 +527,20 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
   const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
   
-  // 🌟 幂等布局引擎：父子中心对齐 + 保留用户排序 + 防重叠 + 自动镜头缩放
   const handleAutoLayout = async () => {
-      // --- 1. 构建图结构 ---
       const undirectedAdj: Record<string, string[]> = {};
       const directedAdj: Record<string, string[]> = {};
       const inDegree: Record<string, number> = {};
 
-      nodes.forEach(n => {
-          undirectedAdj[n.id] = [];
-          directedAdj[n.id] = [];
-          inDegree[n.id] = 0;
-      });
-
+      nodes.forEach(n => { undirectedAdj[n.id] = []; directedAdj[n.id] = []; inDegree[n.id] = 0; });
       edges.forEach(e => {
-          const sourceDir = directedAdj[e.source];
-          const sourceUndir = undirectedAdj[e.source];
-          const targetUndir = undirectedAdj[e.target];
-
+          const sourceDir = directedAdj[e.source]; const sourceUndir = undirectedAdj[e.source]; const targetUndir = undirectedAdj[e.target];
           if (sourceDir) sourceDir.push(e.target);
           inDegree[e.target] = (inDegree[e.target] ?? 0) + 1;
           if (sourceUndir) sourceUndir.push(e.target);
           if (targetUndir) targetUndir.push(e.source);
       });
 
-      // --- 2. 分类节点 ---
       const connectedNodeIds = new Set<string>();
       const isolatedActiveIds: string[] = [];
       const isolatedFinishedIds: string[] = [];
@@ -533,130 +548,67 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       nodes.forEach(n => {
           const isFinishedTask = n.type === 'task' && (n.data.status === 'x' || n.data.customStatus === 'finished');
           const isConnected = (undirectedAdj[n.id]?.length ?? 0) > 0;
-          if (isConnected) {
-              connectedNodeIds.add(n.id);
-          } else if (isFinishedTask) {
-              isolatedFinishedIds.push(n.id);
-          } else {
-              isolatedActiveIds.push(n.id);
-          }
+          if (isConnected) connectedNodeIds.add(n.id);
+          else if (isFinishedTask) isolatedFinishedIds.push(n.id);
+          else isolatedActiveIds.push(n.id);
       });
 
-      // --- 3. 找连通分量 ---
       const components: string[][] = [];
       const visited = new Set<string>();
 
       connectedNodeIds.forEach(id => {
           if (!visited.has(id)) {
-              const comp: string[] = [];
-              const queue = [id];
-              visited.add(id);
+              const comp: string[] = []; const queue = [id]; visited.add(id);
               while (queue.length > 0) {
-                  const curr = queue.shift()!;
-                  comp.push(curr);
-                  undirectedAdj[curr]?.forEach(neighbor => {
-                      if (!visited.has(neighbor)) {
-                          visited.add(neighbor);
-                          queue.push(neighbor);
-                      }
-                  });
+                  const curr = queue.shift()!; comp.push(curr);
+                  undirectedAdj[curr]?.forEach(neighbor => { if (!visited.has(neighbor)) { visited.add(neighbor); queue.push(neighbor); } });
               }
               components.push(comp);
           }
       });
 
       const layout: Record<string, { x: number; y: number }> = {};
-      const COL_WIDTH = 320;
-      const COMPONENT_GAP = 60;
-      const MIN_GAP = 30; 
-      const DEFAULT_NODE_HEIGHT = 100;
-
+      const COL_WIDTH = 320; const COMPONENT_GAP = 60; const MIN_GAP = 30; const DEFAULT_NODE_HEIGHT = 100;
       const nodeHeightMap: Record<string, number> = {};
       const zoom = reactFlowInstance?.getZoom() ?? 1;
+      
       nodes.forEach(n => {
           const el = document.querySelector(`[data-id="${n.id}"]`);
-          if (el) {
-              const rect = el.getBoundingClientRect();
-              nodeHeightMap[n.id] = rect.height / zoom;
-          } else {
-              nodeHeightMap[n.id] = DEFAULT_NODE_HEIGHT;
-          }
+          if (el) { const rect = el.getBoundingClientRect(); nodeHeightMap[n.id] = rect.height / zoom; } else nodeHeightMap[n.id] = DEFAULT_NODE_HEIGHT;
       });
 
       const nodeMap = new Map(nodes.map(n => [n.id, n]));
-
-      const getUserOrderRank = (ids: string[]): string[] => {
-          return [...ids].sort((a, b) => {
-              const yA = nodeMap.get(a)?.position?.y ?? 0;
-              const yB = nodeMap.get(b)?.position?.y ?? 0;
-              return yA - yB;
-          });
-      };
-
+      const getUserOrderRank = (ids: string[]): string[] => { return [...ids].sort((a, b) => { const yA = nodeMap.get(a)?.position?.y ?? 0; const yB = nodeMap.get(b)?.position?.y ?? 0; return yA - yB; }); };
       const componentResults: { comp: string[]; height: number }[] = [];
 
       components.forEach(comp => {
           const level: Record<string, number> = {};
           comp.forEach(id => { level[id] = 0; });
-
-          let changed = true;
-          let iter = 0;
+          let changed = true; let iter = 0;
           while (changed && iter < 200) {
-              changed = false;
-              iter++;
-              edges.forEach(e => {
-                  if (level[e.source] !== undefined && level[e.target] !== undefined) {
-                      if (level[e.target]! <= level[e.source]!) {
-                          level[e.target] = level[e.source]! + 1;
-                          changed = true;
-                      }
-                  }
-              });
+              changed = false; iter++;
+              edges.forEach(e => { if (level[e.source] !== undefined && level[e.target] !== undefined) { if (level[e.target]! <= level[e.source]!) { level[e.target] = level[e.source]! + 1; changed = true; } } });
           }
 
           const levelGroups: Record<number, string[]> = {};
           let maxLevel = 0;
-          comp.forEach(id => {
-              const lvl = level[id] ?? 0;
-              maxLevel = Math.max(maxLevel, lvl);
-              if (!levelGroups[lvl]) levelGroups[lvl] = [];
-              levelGroups[lvl]!.push(id);
-          });
-
-          for (const lvl of Object.keys(levelGroups)) {
-              levelGroups[Number(lvl)] = getUserOrderRank(levelGroups[Number(lvl)]!);
-          }
+          comp.forEach(id => { const lvl = level[id] ?? 0; maxLevel = Math.max(maxLevel, lvl); if (!levelGroups[lvl]) levelGroups[lvl] = []; levelGroups[lvl]!.push(id); });
+          for (const lvl of Object.keys(levelGroups)) levelGroups[Number(lvl)] = getUserOrderRank(levelGroups[Number(lvl)]!);
 
           const posY: Record<string, number> = {};
           const assignedNodes = new Set<string>();
-
-          const compChildren = (id: string): string[] => {
-              return (directedAdj[id] || []).filter(cid => comp.includes(cid));
-          };
-
+          const compChildren = (id: string): string[] => { return (directedAdj[id] || []).filter(cid => comp.includes(cid)); };
           const subtreeHeight: Record<string, number> = {};
+          
           const computeSubtreeHeight = (id: string, visitedCalc: Set<string>): number => {
               if (subtreeHeight[id] !== undefined) return subtreeHeight[id]!;
-              if (visitedCalc.has(id)) {
-                  subtreeHeight[id] = (nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT) + MIN_GAP;
-                  return subtreeHeight[id]!;
-              }
+              if (visitedCalc.has(id)) { subtreeHeight[id] = (nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT) + MIN_GAP; return subtreeHeight[id]!; }
               visitedCalc.add(id);
-
-              const children = compChildren(id);
-              const nodeH = nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT;
-
-              if (children.length === 0) {
-                  subtreeHeight[id] = nodeH + MIN_GAP;
-                  return subtreeHeight[id]!;
-              }
-
+              const children = compChildren(id); const nodeH = nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT;
+              if (children.length === 0) { subtreeHeight[id] = nodeH + MIN_GAP; return subtreeHeight[id]!; }
               let childrenTotalH = 0;
               const sortedChildren = getUserOrderRank(children);
-              sortedChildren.forEach(cid => {
-                  childrenTotalH += computeSubtreeHeight(cid, visitedCalc);
-              });
-
+              sortedChildren.forEach(cid => { childrenTotalH += computeSubtreeHeight(cid, visitedCalc); });
               subtreeHeight[id] = Math.max(nodeH + MIN_GAP, childrenTotalH);
               return subtreeHeight[id]!;
           };
@@ -667,224 +619,105 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           const assignPositions = (id: string, startY: number): number => {
               if (assignedNodes.has(id)) return 0;
               assignedNodes.add(id);
-
-              const children = compChildren(id);
-              const unassigned = children.filter(cid => !assignedNodes.has(cid));
-              const nodeH = nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT;
-
-              if (children.length === 0 || unassigned.length === 0) {
-                  posY[id] = startY;
-                  return nodeH + MIN_GAP;
-              }
-
+              const children = compChildren(id); const unassigned = children.filter(cid => !assignedNodes.has(cid)); const nodeH = nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT;
+              if (children.length === 0 || unassigned.length === 0) { posY[id] = startY; return nodeH + MIN_GAP; }
               const sortedChildren = getUserOrderRank(unassigned);
-              let currentY = startY;
-              let totalUsed = 0;
-
-              sortedChildren.forEach(childId => {
-                  const used = assignPositions(childId, currentY);
-                  currentY += used;
-                  totalUsed += used;
-              });
-
-              const allChildYs = children
-                  .map(cid => posY[cid])
-                  .filter((y): y is number => y !== undefined);
-
+              let currentY = startY; let totalUsed = 0;
+              sortedChildren.forEach(childId => { const used = assignPositions(childId, currentY); currentY += used; totalUsed += used; });
+              const allChildYs = children.map(cid => posY[cid]).filter((y): y is number => y !== undefined);
               if (allChildYs.length > 0) {
                   const firstY = Math.min(...allChildYs);
-                  const lastChildId = children.reduce((acc, cid) => {
-                      const y = posY[cid];
-                      const accY = posY[acc];
-                      if (y === undefined) return acc;
-                      if (accY === undefined) return cid;
-                      return y > accY ? cid : acc;
-                  }, children[0]!);
-                  const lastY = posY[lastChildId] ?? startY;
-                  const lastH = nodeHeightMap[lastChildId] ?? DEFAULT_NODE_HEIGHT;
-                  const childRangeCenter = (firstY + lastY + lastH) / 2;
-                  posY[id] = childRangeCenter - nodeH / 2;
-              } else {
-                  posY[id] = startY;
-              }
-
+                  const lastChildId = children.reduce((acc, cid) => { const y = posY[cid]; const accY = posY[acc]; if (y === undefined) return acc; if (accY === undefined) return cid; return y > accY ? cid : acc; }, children[0]!);
+                  const lastY = posY[lastChildId] ?? startY; const lastH = nodeHeightMap[lastChildId] ?? DEFAULT_NODE_HEIGHT;
+                  const childRangeCenter = (firstY + lastY + lastH) / 2; posY[id] = childRangeCenter - nodeH / 2;
+              } else posY[id] = startY;
               return Math.max(totalUsed, nodeH + MIN_GAP);
           };
 
           const compInDegree: Record<string, number> = {};
           comp.forEach(id => { compInDegree[id] = 0; });
-          edges.forEach(e => {
-              if (compInDegree[e.target] !== undefined && comp.includes(e.source)) {
-                  compInDegree[e.target] = (compInDegree[e.target] ?? 0) + 1;
-              }
-          });
-
+          edges.forEach(e => { if (compInDegree[e.target] !== undefined && comp.includes(e.source)) compInDegree[e.target] = (compInDegree[e.target] ?? 0) + 1; });
           const roots = comp.filter(id => (compInDegree[id] ?? 0) === 0);
           const sortedRoots = getUserOrderRank(roots);
 
           let globalStartY = 0;
-          sortedRoots.forEach(rootId => {
-              const used = assignPositions(rootId, globalStartY);
-              globalStartY += used;
-          });
-
-          comp.forEach(id => {
-              if (posY[id] === undefined) {
-                  posY[id] = globalStartY;
-                  globalStartY += (nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT) + MIN_GAP;
-              }
-          });
+          sortedRoots.forEach(rootId => { const used = assignPositions(rootId, globalStartY); globalStartY += used; });
+          comp.forEach(id => { if (posY[id] === undefined) { posY[id] = globalStartY; globalStartY += (nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT) + MIN_GAP; } });
 
           for (let lvl = 0; lvl <= maxLevel; lvl++) {
-              const group = levelGroups[lvl] || [];
-              const sorted = [...group].sort((a, b) => (posY[a] ?? 0) - (posY[b] ?? 0));
+              const group = levelGroups[lvl] || []; const sorted = [...group].sort((a, b) => (posY[a] ?? 0) - (posY[b] ?? 0));
               for (let i = 1; i < sorted.length; i++) {
-                  const prevId = sorted[i - 1]!;
-                  const currId = sorted[i]!;
-                  const prevBottom = (posY[prevId] ?? 0) + (nodeHeightMap[prevId] ?? DEFAULT_NODE_HEIGHT) + MIN_GAP;
-                  const currTop = posY[currId] ?? 0;
-                  if (currTop < prevBottom) {
-                      posY[currId] = prevBottom;
-                  }
+                  const prevId = sorted[i - 1]!; const currId = sorted[i]!; const prevBottom = (posY[prevId] ?? 0) + (nodeHeightMap[prevId] ?? DEFAULT_NODE_HEIGHT) + MIN_GAP; const currTop = posY[currId] ?? 0;
+                  if (currTop < prevBottom) posY[currId] = prevBottom;
               }
           }
 
           const compLayout: Record<string, { x: number; y: number }> = {};
-          comp.forEach(id => {
-              compLayout[id] = {
-                  x: (level[id] ?? 0) * COL_WIDTH,
-                  y: posY[id] ?? 0,
-              };
-          });
-
+          comp.forEach(id => { compLayout[id] = { x: (level[id] ?? 0) * COL_WIDTH, y: posY[id] ?? 0 }; });
           const allYs = Object.values(compLayout).map(p => p.y);
           const minY = Math.min(...allYs);
           Object.values(compLayout).forEach(p => { p.y -= minY; });
 
           let compMaxBottom = 0;
-          comp.forEach(id => {
-              const y = compLayout[id]?.y ?? 0;
-              const h = nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT;
-              compMaxBottom = Math.max(compMaxBottom, y + h);
-          });
-
-          comp.forEach(id => {
-              layout[id] = { ...compLayout[id]! };
-          });
-
+          comp.forEach(id => { const y = compLayout[id]?.y ?? 0; const h = nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT; compMaxBottom = Math.max(compMaxBottom, y + h); });
+          comp.forEach(id => { layout[id] = { ...compLayout[id]! }; });
           componentResults.push({ comp, height: compMaxBottom });
       });
 
       componentResults.sort((a, b) => b.comp.length - a.comp.length);
-
       let globalY = 0;
-      componentResults.forEach(cr => {
-          cr.comp.forEach(id => {
-              if (layout[id]) {
-                  layout[id]!.y += globalY;
-              }
-          });
-          globalY += cr.height + COMPONENT_GAP;
-      });
+      componentResults.forEach(cr => { cr.comp.forEach(id => { if (layout[id]) layout[id]!.y += globalY; }); globalY += cr.height + COMPONENT_GAP; });
 
       if (isolatedActiveIds.length > 0) {
-          const sorted = getUserOrderRank(isolatedActiveIds);
-          const COLS = 3;
-          const ISO_ROW_GAP = 140;
-          const startY = globalY;
-          sorted.forEach((id, idx) => {
-              const row = Math.floor(idx / COLS);
-              const col = idx % COLS;
-              layout[id] = { x: col * COL_WIDTH, y: startY + row * ISO_ROW_GAP };
-          });
-          const maxRow = Math.floor((sorted.length - 1) / COLS);
-          globalY = startY + (maxRow + 1) * ISO_ROW_GAP + COMPONENT_GAP;
+          const sorted = getUserOrderRank(isolatedActiveIds); const COLS = 3; const ISO_ROW_GAP = 140; const startY = globalY;
+          sorted.forEach((id, idx) => { const row = Math.floor(idx / COLS); const col = idx % COLS; layout[id] = { x: col * COL_WIDTH, y: startY + row * ISO_ROW_GAP }; });
+          const maxRow = Math.floor((sorted.length - 1) / COLS); globalY = startY + (maxRow + 1) * ISO_ROW_GAP + COMPONENT_GAP;
       }
 
       if (isolatedFinishedIds.length > 0) {
-          const COLS = 4;
-          const COMPACT_GAP = 100;
-          const startY = globalY;
-          isolatedFinishedIds.forEach((id, idx) => {
-              const row = Math.floor(idx / COLS);
-              const col = idx % COLS;
-              layout[id] = { x: col * COL_WIDTH, y: startY + row * COMPACT_GAP };
-          });
+          const COLS = 4; const COMPACT_GAP = 100; const startY = globalY;
+          isolatedFinishedIds.forEach((id, idx) => { const row = Math.floor(idx / COLS); const col = idx % COLS; layout[id] = { x: col * COL_WIDTH, y: startY + row * COMPACT_GAP }; });
       }
 
       setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] ?? n.position })));
 
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (board) {
-          const mergedLayout = { ...board.data.layout };
-          const updatedTextNodes = board.data.textNodes.map(tn => ({ ...tn }));
-
+          const mergedLayout = { ...board.data.layout }; const updatedTextNodes = board.data.textNodes.map(tn => ({ ...tn }));
           Object.keys(layout).forEach(nodeId => {
-              const node = nodes.find(n => n.id === nodeId);
-              const newPos = layout[nodeId];
+              const node = nodes.find(n => n.id === nodeId); const newPos = layout[nodeId];
               if (newPos !== undefined) {
-                  if (node?.type === 'task') {
-                      mergedLayout[nodeId] = newPos;
-                  } else if (node?.type === 'text') {
-                      const tnIndex = updatedTextNodes.findIndex(tn => tn.id === nodeId);
-                      if (tnIndex > -1) {
-                          const textNodeToUpdate = updatedTextNodes[tnIndex];
-                          if (textNodeToUpdate !== undefined) {
-                              textNodeToUpdate.x = newPos.x;
-                              textNodeToUpdate.y = newPos.y;
-                          }
-                      }
-                  }
+                  if (node?.type === 'task') mergedLayout[nodeId] = newPos;
+                  else if (node?.type === 'text') { const tnIndex = updatedTextNodes.findIndex(tn => tn.id === nodeId); if (tnIndex > -1) { const textNodeToUpdate = updatedTextNodes[tnIndex]; if (textNodeToUpdate !== undefined) { textNodeToUpdate.x = newPos.x; textNodeToUpdate.y = newPos.y; } } }
               }
           });
-
           await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes });
       }
 
       new Notice("Smart layout applied!");
       
-      // 【破与离：提取有效焦点并实施优雅降级】
-      // 1. 过滤出所有尚未完成的核心任务
-      const activeNodesToFocus = nodes.filter(n => {
-          if (n.type === 'task') {
-              const isFinished = n.data.status === 'x' || n.data.customStatus === 'finished';
-              return !isFinished;
-          }
-          // 排除纯文本节点参与焦点计算，让镜头绝对纯粹
-          return false;
-      });
-
-      // 2. 降级保护：如果任务全部完成了，就退回到展示所有节点，防止镜头失控
+      const activeNodesToFocus = nodes.filter(n => { if (n.type === 'task') return !(n.data.status === 'x' || n.data.customStatus === 'finished'); return false; });
       const nodesToFit = activeNodesToFocus.length > 0 ? activeNodesToFocus : nodes;
-      
-      // 3. 剥离冗余数据，只保留 ReactFlow 引擎需要的 id 映射
       const fitViewNodes = nodesToFit.map(n => ({ id: n.id }));
 
-      // 4. 执行带目标约束的平滑运镜
-      setTimeout(() => {
-          reactFlowInstance.fitView({ 
-              nodes: fitViewNodes,  // 注入我们精准计算的焦点矩阵
-              duration: 800, 
-              padding: 0.1 
-          });
-      }, 50);
+      setTimeout(() => { reactFlowInstance.fitView({ nodes: fitViewNodes, duration: 800, padding: 0.1 }); }, 50);
   };
 
-  // 【修改】调用自定义确认弹窗状态，彻底舍弃 window.confirm
-  const handleResetView = async () => { 
+  // 修复 10: 去除异步包装，转为普通函数
+  const handleResetView = () => { 
       setConfirmReq({
           message: "Clear all positions?",
-          action: async () => {
-              const board = plugin.settings.boards.find(b => b.id === activeBoardId);
-              if (board) {
-                  const newLayout = {};
-                  const newTextNodes = board.data.textNodes.map((tn, index) => ({
-                      ...tn, x: (index % 3) * 320, y: Math.floor(index / 3) * 200
-                  }));
-                  await plugin.saveBoardData(activeBoardId, { layout: newLayout, textNodes: newTextNodes }); 
-                  setRefreshKey(prev => prev + 1); 
-                  new Notice("View reset."); 
-              }
+          action: () => {
+              void (async () => {
+                  const board = plugin.settings.boards.find(b => b.id === activeBoardId);
+                  if (board) {
+                      const newLayout = {};
+                      const newTextNodes = board.data.textNodes.map((tn, index) => ({ ...tn, x: (index % 3) * 320, y: Math.floor(index / 3) * 200 }));
+                      await plugin.saveBoardData(activeBoardId, { layout: newLayout, textNodes: newTextNodes }); 
+                      setRefreshKey(prev => prev + 1); 
+                      new Notice("View reset."); 
+                  }
+              })();
           }
       });
   };
@@ -915,7 +748,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       >
         <Background gap={24} color="rgba(150,150,150,0.1)" size={1.5} />
         <GraphToolbar />
-        {/* 【修改】向 ControlPanel 注入 onRequestConfirm 句柄 */}
         <ControlPanel boards={plugin.settings.boards} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onDeleteBoard={handleDeleteBoard} onAutoLayout={handleAutoLayout} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} onRequestConfirm={(msg: string, action: () => void) => setConfirmReq({ message: msg, action })} />
         
         <Panel position="bottom-right" style={{ margin: 0, zIndex: 99, pointerEvents: 'none' }}>
@@ -935,14 +767,13 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       </ReactFlow>
 
       {editTarget && (
-          <EditTaskModal initialText={editTarget.text} onClose={() => setEditTarget(null)} onSave={saveTaskEdit} allTags={allTags} />
+          <EditTaskModal initialText={editTarget.text} onClose={() => setEditTarget(null)} onSave={(text) => { void saveTaskEdit(text); }} allTags={allTags} />
       )}
 
       {createTarget && (
-          <EditTaskModal initialText="" onClose={() => setCreateTarget(null)} onSave={(text) => handleCreateTask(text)} allTags={allTags} />
+          <EditTaskModal initialText="" onClose={() => setCreateTarget(null)} onSave={(text) => { void handleCreateTask(text); }} allTags={allTags} />
       )}
 
-      {/* 【新增】将确认弹窗渲染在最高层级 */}
       {confirmReq && (
           <ConfirmModal message={confirmReq.message} onConfirm={confirmReq.action} onClose={() => setConfirmReq(null)} />
       )}
@@ -951,19 +782,26 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 };
 
 const TaskGraphWithProvider = ({ plugin }: { plugin: TaskGraphPlugin }) => { return ( <ReactFlowProvider> <TaskGraphComponent plugin={plugin} /></ReactFlowProvider> ); };
+
 export class TaskGraphView extends ItemView {
   plugin: TaskGraphPlugin; root: Root | null = null;
   constructor(leaf: WorkspaceLeaf, plugin: TaskGraphPlugin) { super(leaf); this.plugin = plugin; }
   getViewType() { return VIEW_TYPE_TASK_GRAPH; } getDisplayText() { return "Spatial Task Graph"; } getIcon() { return "network"; }
-  async onOpen() { 
+  
+  // 修复 6 & 7: 符合 Obsidian ItemView 生命周期规范，严格返回 Promise.resolve() 替代 async 空包装
+  onOpen(): Promise<void> { 
       const container = this.containerEl.children[1] as HTMLElement; 
-      if (!container) return;
-      container.empty(); 
-      // 这里的内联宽高样式是安全的，仅作用于容器
-      container.setAttr('style', 'height: 100%; width: 100%; overflow: hidden;'); 
-      this.root = createRoot(container); 
-      this.root.render(<React.StrictMode><TaskGraphWithProvider plugin={this.plugin} /></React.StrictMode>); 
+      if (container) {
+          container.empty(); 
+          container.setAttr('style', 'height: 100%; width: 100%; overflow: hidden;'); 
+          this.root = createRoot(container); 
+          this.root.render(<React.StrictMode><TaskGraphWithProvider plugin={this.plugin} /></React.StrictMode>); 
+      }
+      return Promise.resolve();
   }
   refresh() { if (this.plugin.viewRefresh) this.plugin.viewRefresh(); }
-  async onClose() { this.root?.unmount(); }
+  onClose(): Promise<void> { 
+      this.root?.unmount(); 
+      return Promise.resolve();
+  }
 }

@@ -1,4 +1,5 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { PluginSettingTab, Setting } from "obsidian";
+import type { App } from "obsidian"; // 修复 3: 使用 type 导入
 import SpatialTaskGraphPlugin from "./main"; // 确保与 main.ts 里的类名一致
 
 export class TaskGraphSettingTab extends PluginSettingTab {
@@ -14,7 +15,10 @@ export class TaskGraphSettingTab extends PluginSettingTab {
 
         containerEl.empty();
 
-        containerEl.createEl('h2', { text: 'Spatial Task Graph Settings' });
+        // 修复 4: 使用官方标准 API 生成标题，取代 createEl('h2')
+        new Setting(containerEl)
+            .setName('Spatial Task Graph Settings')
+            .setHeading();
 
         // 示例设置项：你可以根据需要修改或添加
         new Setting(containerEl)

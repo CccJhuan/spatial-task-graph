@@ -1,5 +1,6 @@
-import { App, Plugin, WorkspaceLeaf, TFile, debounce } from 'obsidian';
+import { Plugin, WorkspaceLeaf, TFile, debounce } from 'obsidian';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
+import { TaskGraphSettingTab } from './settings';
 
 export interface TextNodeData { id: string; text: string; x: number; y: number; }
 
@@ -21,18 +22,29 @@ const DEFAULT_SETTINGS: TaskGraphSettings = { boards: [DEFAULT_BOARD], lastActiv
 export default class TaskGraphPlugin extends Plugin {
 	settings: TaskGraphSettings;
 	viewRefresh?: () => void;
-	taskCache: Map<string, any[]> = new Map();
-	isCacheInitialized: boolean = false;
-    debouncedRefresh = debounce(() => {
-        if (this.viewRefresh) this.viewRefresh();
-    }, 500, true);
+    
+    // 增量缓存核心
+    taskCache: Map<string, any[]> = new Map();
+    isCacheInitialized: boolean = false;
+
+	debouncedRefresh = debounce(() => {
+		if (this.viewRefresh) this.viewRefresh();
+	}, 500, true);
+
 	async onload() {
 		await this.loadSettings();
+        
+        // 注册设置面板
+        this.addSettingTab(new TaskGraphSettingTab(this.app, this));
+
 		this.registerView(VIEW_TYPE_TASK_GRAPH, (leaf) => new TaskGraphView(leaf, this));
 		this.addRibbonIcon('network', 'Open Task Graph', () => { this.activateView(); });
 		this.addCommand({ id: 'open-task-graph', name: 'Open Task Graph', callback: () => { this.activateView(); } });
 
-		this.registerEvent(this.app.metadataCache.on('changed', (file) => this.updateFileCache(file)));
+        // 精细化监听文件变动，抛弃全量盲目刷新
+		this.registerEvent(this.app.metadataCache.on('changed', (file) => {
+            void this.updateFileCache(file);
+        }));
         this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
             if (this.taskCache.has(oldPath)) {
                 const tasks = this.taskCache.get(oldPath);
@@ -40,20 +52,21 @@ export default class TaskGraphPlugin extends Plugin {
                 if (tasks) this.taskCache.set(file.path, tasks);
                 this.debouncedRefresh();
             }
-		}));
-		this.registerEvent(this.app.vault.on('delete', (file) => {
+        }));
+        this.registerEvent(this.app.vault.on('delete', (file) => {
             if (this.taskCache.has(file.path)) {
                 this.taskCache.delete(file.path);
                 this.debouncedRefresh();
             }
         }));
-		// 插件加载后，后台异步初始化缓存，不阻塞 UI
+        
+        // 插件加载后，后台异步初始化缓存，不阻塞 UI
         this.app.workspace.onLayoutReady(() => {
-            this.initializeCache();
+            void this.initializeCache();
         });
 	}
 
-	// 【新增】初始化全量扫描（仅执行一次）
+    // 初始化全量扫描（仅执行一次）
     async initializeCache() {
         const files = this.app.vault.getMarkdownFiles();
         for (const file of files) {
@@ -63,7 +76,7 @@ export default class TaskGraphPlugin extends Plugin {
         this.debouncedRefresh();
     }
 
-    // 【新增】单文件级别的局部更新（时间复杂度 O(1)）
+    // 单文件级别的局部更新（时间复杂度 O(1)）
     async updateFileCache(file: import('obsidian').TAbstractFile, triggerRefresh = true) {
         if (!(file instanceof TFile) || file.extension !== 'md') return;
         
@@ -124,111 +137,69 @@ export default class TaskGraphPlugin extends Plugin {
         }
     }
 
+	onunload() { }
+
+	async loadSettings() {
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		if (!this.settings.boards || this.settings.boards.length === 0) {
+			this.settings.boards = [DEFAULT_BOARD];
+		}
+	}
+
+	async saveSettings() {
+		await this.saveData(this.settings);
+	}
 
 	async activateView() {
 		const { workspace } = this.app;
 		let leaf: WorkspaceLeaf | null = null;
 		const leaves = workspace.getLeavesOfType(VIEW_TYPE_TASK_GRAPH);
-		
-        // Fix TS2322 & TS2345
-		if (leaves.length > 0 && leaves[0]) { 
-            leaf = leaves[0] as WorkspaceLeaf; 
-            workspace.revealLeaf(leaf); 
-        } else { 
-            leaf = workspace.getLeaf('tab'); 
-            if (leaf) {
-                await leaf.setViewState({ type: VIEW_TYPE_TASK_GRAPH, active: true }); 
-                workspace.revealLeaf(leaf); 
+		if (leaves.length > 0) {
+            const firstLeaf = leaves[0];
+            if (firstLeaf) {
+                leaf = firstLeaf;
+            }
+        } else {
+            const rightLeaf = workspace.getRightLeaf(false);
+            if (rightLeaf) {
+                leaf = rightLeaf;
+                await leaf.setViewState({ type: VIEW_TYPE_TASK_GRAPH, active: true });
             }
         }
+		if (leaf) workspace.revealLeaf(leaf);
 	}
 
-	async getTasks(boardId: string) {
-        // 1. 防御性拦截：如果初始化还没完成，直接返回空，避免报错
-        if (!this.isCacheInitialized) return [];
+	async ensureBlockId(boardId: string, taskId: string): Promise<string> {
+		if (taskId.includes('::^')) return taskId; 
+		const [filePath] = taskId.split('::#');
+		if (!filePath) return taskId;
 
-		const board = this.settings.boards.find(b => b.id === boardId) || this.settings.boards[0];
-        if (!board) return [];
+		const file = this.app.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return taskId;
 
-		const filters = board.filters;
-        
-        // 2. 需求5：收集所有有连线的节点 ID（这部分逻辑不变，因为是针对当前图板的）
-		const connectedTaskIds = new Set<string>();
-		board.data.edges.forEach((e: any) => {
-			connectedTaskIds.add(e.source);
-			connectedTaskIds.add(e.target);
-		});
+		try {
+			const cache = this.app.metadataCache.getFileCache(file);
+			if (!cache || !cache.listItems) return taskId;
+			
+			const content = await this.app.vault.read(file);
+			const lines = content.split('\n');
+			const targetTaskObj = (await this.getTasks(boardId)).find(t => t.id === taskId);
+			if (!targetTaskObj) return taskId;
 
-        const allTasks: any[] = [];
+			const lineNumber = targetTaskObj.line;
+            const originalLine = lines[lineNumber];
+			if (originalLine === undefined) return taskId;
 
-        // 3. 核心大换血：不再 getMarkdownFiles()，而是直接遍历内存 Map
-        for (const [path, fileTasks] of this.taskCache.entries()) {
-            
-            // 如果图板设置了文件夹过滤，直接在这一层把无关文件的任务全部跳过，极速剪枝
-            if (filters.folders.length > 0 && !filters.folders.some(folder => path.startsWith(folder))) {
-                continue;
-            }
-
-            // 遍历该文件在内存中已经解析好的任务对象
-            for (const t of fileTasks) {
-                const isConnected = connectedTaskIds.has(t.id);
-                
-                // 过滤逻辑保持不变，但因为 t 是内存对象，不需要重新截取字符串
-                if (!isConnected && filters.status.length > 0 && !filters.status.includes(t.status)) continue;
-                if (filters.tags.length > 0 && !filters.tags.some(tag => t.rawText.includes(tag))) continue;
-                if (filters.excludeTags.length > 0 && filters.excludeTags.some(tag => t.rawText.includes(tag))) continue;
-
-                allTasks.push(t);
-            }
+			const randomBlockId = Math.random().toString(36).substring(2, 8);
+			lines[lineNumber] = `${originalLine.trimEnd()} ^${randomBlockId}`;
+			await this.app.vault.modify(file, lines.join('\n'));
+			
+			return `${filePath}::^${randomBlockId}`;
+		} catch(e) { 
+            console.error("TaskGraph Plugin Error ensuring block ID:", e);
+            return taskId; 
         }
-
-		return allTasks;
 	}
-
-    async ensureBlockId(boardId: string, nodeId: string): Promise<string> {
-        if (nodeId.includes('::^')) return nodeId; 
-
-        const tasks = await this.getTasks(boardId);
-        const task = tasks.find(t => t.id === nodeId);
-        if (!task) return nodeId; 
-
-        const randomBlockId = Math.random().toString(36).substring(2, 8);
-        const newId = `${task.path}::^${randomBlockId}`;
-
-        const file = this.app.vault.getAbstractFileByPath(task.path);
-        if (file instanceof TFile) {
-            const content = await this.app.vault.read(file);
-            const lines = content.split('\n');
-            const targetLine = lines[task.line];
-            // Fix TS2532
-            if (targetLine !== undefined && !targetLine.match(/\s\^([a-zA-Z0-9\-]+)$/)) {
-                lines[task.line] = targetLine.trimEnd() + ` ^${randomBlockId}`;
-                await this.app.vault.modify(file, lines.join('\n'));
-            }
-        }
-
-        const boardIndex = this.settings.boards.findIndex(b => b.id === boardId);
-        if (boardIndex > -1) {
-            const board = this.settings.boards[boardIndex];
-            if (!board) return newId; // Fix TS18048
-            
-            board.data.edges.forEach((e: any) => {
-                if (e.source === nodeId) e.source = newId;
-                if (e.target === nodeId) e.target = newId;
-            });
-            if (board.data.layout[nodeId]) {
-                board.data.layout[newId] = board.data.layout[nodeId];
-                delete board.data.layout[nodeId];
-            }
-            if (board.data.nodeStatus[nodeId]) {
-                board.data.nodeStatus[newId] = board.data.nodeStatus[nodeId];
-                delete board.data.nodeStatus[nodeId];
-            }
-            await this.saveSettings();
-        }
-
-        return newId;
-    }
 
 	async updateTaskContent(filePath: string, lineNumber: number, newText: string) {
 		const file = this.app.vault.getAbstractFileByPath(filePath);
@@ -241,7 +212,7 @@ export default class TaskGraphPlugin extends Plugin {
 			const originalLine = lines[lineNumber];
             if (originalLine === undefined) return; 
 
-            // 第一步：利用高阶正则安全提取“前缀(包含状态)”和“原有块 ID”
+            // 利用高阶正则安全提取“前缀(包含状态)”和“原有块 ID”
             const lineRegex = /^(\s*- \[[x\s\/bc!-]\]\s)?(.*?)(?:\s+(\^[a-zA-Z0-9\-]+))?$/;
             const originalMatch = originalLine.match(lineRegex);
 
@@ -249,11 +220,11 @@ export default class TaskGraphPlugin extends Plugin {
             const prefix = originalMatch && originalMatch[1] ? originalMatch[1] : '- [ ] ';
             const existingBlockId = originalMatch && originalMatch[3] ? originalMatch[3] : '';
 
-            // 第二步：清洗用户输入的新文本
+            // 清洗用户输入的新文本
             // 风险规避：强制剥离用户可能不小心粘贴进来的其他块 ID，并清除首尾不可见字符
             const cleanNewText = newText.replace(/(?:\s+\^[a-zA-Z0-9\-]+)+$/, '').trim();
 
-            // 第三步：无损缝合
+            // 无损缝合
             const finalBlockIdStr = existingBlockId ? ` ${existingBlockId}` : '';
             lines[lineNumber] = `${prefix}${cleanNewText}${finalBlockIdStr}`;
 
@@ -291,7 +262,7 @@ export default class TaskGraphPlugin extends Plugin {
 		const boardIndex = this.settings.boards.findIndex(b => b.id === boardId);
 		if (boardIndex === -1) return;
         const board = this.settings.boards[boardIndex];
-        if (!board) return; // Fix TS2532
+        if (!board) return; 
 		const currentData = board.data;
 		if (data.layout) currentData.layout = data.layout;
 		if (data.edges) currentData.edges = data.edges;
@@ -303,14 +274,48 @@ export default class TaskGraphPlugin extends Plugin {
 	async updateBoardConfig(boardId: string, config: Partial<GraphBoard>) {
 		const boardIndex = this.settings.boards.findIndex(b => b.id === boardId);
 		if (boardIndex === -1) return;
-        // Fix TS2322
 		this.settings.boards[boardIndex] = { ...this.settings.boards[boardIndex], ...config } as GraphBoard;
 		await this.saveSettings();
 	}
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-		if (!this.settings.boards || this.settings.boards.length === 0) this.settings.boards = [DEFAULT_BOARD];
+    // 已经转换为纯同步的增量消费者方法，去除 async 彻底解决 lint 报错
+	getTasks(boardId: string) {
+        // 防御性拦截：如果初始化还没完成，直接返回空，避免报错
+        if (!this.isCacheInitialized) return [];
+
+		const board = this.settings.boards.find(b => b.id === boardId) || this.settings.boards[0];
+        if (!board) return [];
+
+		const filters = board.filters;
+        
+        // 收集所有有连线的节点 ID
+		const connectedTaskIds = new Set<string>();
+		board.data.edges.forEach((e: any) => {
+			connectedTaskIds.add(e.source);
+			connectedTaskIds.add(e.target);
+		});
+
+        const allTasks: any[] = [];
+
+        // 核心大换血：不再访问 getMarkdownFiles()，直接遍历内存 Map 实现 O(1) 量级提取
+        for (const [path, fileTasks] of this.taskCache.entries()) {
+            
+            // 目录过滤极速剪枝
+            if (filters.folders.length > 0 && !filters.folders.some(folder => path.startsWith(folder))) {
+                continue;
+            }
+
+            for (const t of fileTasks) {
+                const isConnected = connectedTaskIds.has(t.id);
+                
+                if (!isConnected && filters.status.length > 0 && !filters.status.includes(t.status)) continue;
+                if (filters.tags.length > 0 && !filters.tags.some(tag => t.rawText.includes(tag))) continue;
+                if (filters.excludeTags.length > 0 && filters.excludeTags.some(tag => t.rawText.includes(tag))) continue;
+
+                allTasks.push(t);
+            }
+        }
+
+		return allTasks;
 	}
-	async saveSettings() { await this.saveData(this.settings); }
 }
