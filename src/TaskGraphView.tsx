@@ -31,7 +31,7 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
   
   return (
     <div className="task-node-wrapper">
-      <Handle type="target" position={Position.Left} isConnectable={isConnectable} className="custom-handle" style={{ left: '-12px', top: '50%', transform: 'translateY(-50%)' }} />
+      <Handle type="target" position={Position.Left} isConnectable={isConnectable} className="custom-handle" style={{ left: '-20px', width: '40px', height: '40px', top: '50%', transform: 'translateY(-50%)' }} />
       <div style={{ height: '6px', width: '100%', background: statusColor, opacity: 0.8, flexShrink: 0 }}></div>
       <div style={{ padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
@@ -64,7 +64,7 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
               <div className="open-file-btn" onClick={(e) => { e.stopPropagation(); data.onOpenFile(data.path); }} title="Open File">↗ <span>{data.file}</span></div>
           </div>
       </div>
-      <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="custom-handle custom-handle-right" style={{ right: '-12px', top: '50%', transform: 'translateY(-50%)' }} />
+      <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="custom-handle custom-handle-right" style={{ right: '-20px', width: '40px', height: '40px', top: '50%', transform: 'translateY(-50%)' }} />
     </div>
   );
 });
@@ -77,10 +77,9 @@ const TextNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
 
     return (
         <div className="text-node-wrapper">
-            <Handle type="target" position={Position.Left} isConnectable={isConnectable} className="custom-handle" style={{ left: '-12px', top: '50%', transform: 'translateY(-50%)' }} />
-            <textarea className="text-node-textarea" value={text} onChange={(e) => setText(e.target.value)} onBlur={handleBlur} rows={rows} placeholder="Note..." onMouseDown={(e) => e.stopPropagation()} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ height: 'auto' }} />
-            <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="custom-handle custom-handle-right" style={{ right: '-12px', top: '50%', transform: 'translateY(-50%)' }} />
-            <Handle type="source" position={Position.Bottom} isConnectable={isConnectable} className="custom-handle" style={{ bottom: '-12px', left: '50%', transform: 'translateX(-50%)' }} />
+            <Handle type="target" position={Position.Left} isConnectable={isConnectable} className="custom-handle" style={{ left: '-20px', width: '40px', height: '40px', top: '50%', transform: 'translateY(-50%)' }} />
+            <textarea className="text-node-textarea nodrag" value={text} onChange={(e) => setText(e.target.value)} onBlur={handleBlur} rows={rows} placeholder="Note..." onMouseDown={(e) => e.stopPropagation()} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ height: 'auto' }} />
+            <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="custom-handle custom-handle-right" style={{ right: '-20px', width: '40px', height: '40px', top: '50%', transform: 'translateY(-50%)' }} />
         </div>
     );
 });
@@ -259,9 +258,16 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [editTarget, setEditTarget] = React.useState<{id: string, text: string, path: string, line: number} | null>(null);
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
+  
   const [allTags, setAllTags] = React.useState<string[]>([]);
+  // 【核心补全】：就是漏了下面这一行，把它加上！
+  const [allFolders, setAllFolders] = React.useState<string[]>([]);
+  
   const [showHelp, setShowHelp] = React.useState(false); 
   const [confirmReq, setConfirmReq] = React.useState<{ message: string, action: () => void } | null>(null);
+  
+  // 核心：新增连线追踪状态
+  const [isConnecting, setIsConnecting] = React.useState(false);
   
   const reactFlowInstance = useReactFlow();
   const connectionStartRef = React.useRef<{ nodeId: string | null; handleType: string | null }>({ nodeId: null, handleType: null });
@@ -283,6 +289,15 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       
       const tasks = plugin.getTasks(activeBoardId);
       
+      // 调整3：提取含有任务的真实路径作为补全项
+      const folderSet = new Set<string>();
+      tasks.forEach(t => {
+          const parts = t.path.split('/');
+          parts.pop(); 
+          if (parts.length > 0) folderSet.add(parts.join('/'));
+      });
+      setAllFolders(Array.from(folderSet));
+
       const boardConfig = plugin.settings.boards.find(b => b.id === activeBoardId);
       const savedLayout = boardConfig?.data.layout || {};
       const savedEdges = boardConfig?.data.edges || [];
@@ -317,8 +332,14 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
     loadData();
   }, [plugin, activeBoardId, refreshKey]);
 
-  const onConnectStart = React.useCallback((event: React.MouseEvent | React.TouchEvent, params: any) => { connectionStartRef.current = params; connectionMadeRef.current = false; }, []);
+  const onConnectStart = React.useCallback((event: React.MouseEvent | React.TouchEvent, params: any) => { 
+      connectionStartRef.current = params; 
+      connectionMadeRef.current = false; 
+      setIsConnecting(true); // 开启：拖拽连线时激活光标变化
+  }, []);
+  
   const onConnectEnd = React.useCallback((event: MouseEvent | TouchEvent) => {
+      setIsConnecting(false); // 结束：恢复正常光标
       if (connectionMadeRef.current) return;
       const targetIsPane = (event.target as HTMLElement).classList.contains('react-flow__pane');
       if (targetIsPane && connectionStartRef.current.nodeId) {
@@ -527,6 +548,16 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
   const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
   
+  // 核心补全：独立出来的 Apply 批量处理逻辑
+  const handleApplyFilters = async (tagsStr: string, foldersStr: string) => {
+      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
+      if (!board) return;
+      board.filters.tags = tagsStr.split(',').map(s => s.trim()).filter(s => s);
+      board.filters.folders = foldersStr.split(',').map(s => s.trim()).filter(s => s);
+      await plugin.saveSettings();
+      setRefreshKey(prev => prev + 1);
+  };
+
   const handleAutoLayout = async () => {
       const undirectedAdj: Record<string, string[]> = {};
       const directedAdj: Record<string, string[]> = {};
@@ -725,7 +756,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const handleSidebarClick = (nodeId: string) => { const node = nodes.find(n => n.id === nodeId); if (node) { reactFlowInstance.setCenter(node.position.x + 120, node.position.y + 60, { zoom: 1.2, duration: 800 }); setNodes(nds => nds.map(n => ({ ...n, selected: n.id === nodeId }))); } };
 
   return (
-    <div className="task-graph-container" onContextMenu={onPaneContextMenu}>
+    <div className={`task-graph-container ${isConnecting ? 'is-connecting' : ''}`} onContextMenu={onPaneContextMenu}>
       <TaskSidebar nodes={nodes} onNodeCenter={handleSidebarClick} onStatusChange={updateNodeStatus} />
       <ReactFlow
         nodes={nodes} edges={edges}
@@ -748,7 +779,8 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       >
         <Background gap={24} color="rgba(150,150,150,0.1)" size={1.5} />
         <GraphToolbar />
-        <ControlPanel boards={plugin.settings.boards} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onDeleteBoard={handleDeleteBoard} onAutoLayout={handleAutoLayout} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} onRequestConfirm={(msg: string, action: () => void) => setConfirmReq({ message: msg, action })} />
+        {/* 核心补全：完整注入 allTags, allFolders 和 onApplyFilters */}
+        <ControlPanel boards={plugin.settings.boards} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onDeleteBoard={handleDeleteBoard} onAutoLayout={handleAutoLayout} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} onApplyFilters={handleApplyFilters} onRequestConfirm={(msg: string, action: () => void) => setConfirmReq({ message: msg, action })} allTags={allTags} allFolders={allFolders} />
         
         <Panel position="bottom-right" style={{ margin: 0, zIndex: 99, pointerEvents: 'none' }}>
             <div style={{ position: 'fixed', bottom: 'calc(20px + 200px)', right: '28px', pointerEvents: 'all' }}>
