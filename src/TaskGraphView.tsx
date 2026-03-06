@@ -3,7 +3,6 @@ import * as React from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import ReactFlow, { 
   Background, 
-  MiniMap, 
   useNodesState, 
   useEdgesState, 
   addEdge,
@@ -18,77 +17,14 @@ import ReactFlow, {
   SelectionMode,
   ConnectionLineType
 } from 'reactflow';
-import 'reactflow/dist/style.css'; 
+// 移除这行无用的 import，因为 Obsidian 的 esbuild 默认不处理 node_modules 里的 css 导入
+// import 'reactflow/dist/style.css'; 
 
 import TaskGraphPlugin, { GraphBoard } from './main';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
-const REACT_FLOW_CORE_STYLES = `
-    .react-flow{direction:ltr;width:100%;height:100%;position:relative;z-index:0;overflow:hidden}
-    .react-flow__background{background-color:transparent;z-index:-1;width:100%;height:100%;top:0;left:0;position:absolute}
-    .react-flow__container{position:absolute;width:100%;height:100%;top:0;left:0}
-    .react-flow__pane{z-index:1;cursor:grab;width:100%;height:100%;top:0;left:0;position:absolute}
-    .react-flow__pane.dragging{cursor:grabbing}
-    .react-flow__viewport{transform-origin:0 0;z-index:2;pointer-events:none;width:100%;height:100%;top:0;left:0;position:absolute}
-    .react-flow__renderer{z-index:4}
-    .react-flow__selection{z-index:1001;position:absolute;top:0;left:0;pointer-events:none}
-    .react-flow__nodes{pointer-events:none;transform-origin:0 0}
-    .react-flow__node{position:absolute;user-select:none;pointer-events:all;transform-origin:0 0;box-sizing:border-box;cursor:default}
-    .react-flow__edges{pointer-events:none;overflow:visible}
-    .react-flow__edge{pointer-events:all}
-    .react-flow__edge-text{pointer-events:none;user-select:none}
-    .react-flow__handle{position:absolute;pointer-events:all;min-width:5px;min-height:5px;width:6px;height:6px;background:#555;border:1px solid #fff;border-radius:100%;z-index:1}
-    .react-flow__minimap{z-index:5}
-    .react-flow__panel{z-index:10; position:absolute; pointer-events:none;}
-    .react-flow__selection { background: rgba(var(--interactive-accent-rgb), 0.1); border: 1px solid var(--interactive-accent); border-radius: 6px; }
-`;
-
-const CUSTOM_STYLES = `
-    .task-graph-container { width: 100%; height: 100%; position: relative; background: var(--background-primary); font-family: var(--font-interface); color: var(--text-normal); }
-    input[type="checkbox"].custom-checkbox { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; border: 1.5px solid var(--text-muted); border-radius: 50%; margin: 0 8px 0 0; padding: 0; cursor: pointer; position: relative; display: inline-flex; align-items: center; justify-content: center; background-color: transparent; flex-shrink: 0; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
-    input[type="checkbox"].custom-checkbox:hover { border-color: var(--interactive-accent); background-color: rgba(var(--interactive-accent-rgb), 0.1); }
-    input[type="checkbox"].custom-checkbox:checked { background-color: var(--interactive-accent); border-color: var(--interactive-accent); }
-    input[type="checkbox"].custom-checkbox:checked::after { content: ''; width: 100%; height: 100%; background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'); background-size: 12px; background-position: center; background-repeat: no-repeat; }
-    input[type="checkbox"].filter-checkbox { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; border: 1px solid var(--text-muted); border-radius: 4px; margin-right: 6px; cursor: pointer; position: relative; }
-    input[type="checkbox"].filter-checkbox:checked { background-color: var(--text-normal); border-color: var(--text-normal); }
-    input[type="checkbox"].filter-checkbox:checked::after { content: ''; position: absolute; top: 1px; left: 4px; width: 4px; height: 8px; border: solid var(--background-primary); border-width: 0 2px 2px 0; transform: rotate(45deg); }
-    .custom-handle { width: 24px !important; height: 24px !important; background: transparent !important; border: none !important; display: flex; align-items: center; justify-content: center; z-index: 20 !important; }
-    .custom-handle::after { content: ""; display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); border: 2px solid var(--background-primary); transition: transform 0.2s, background 0.2s; }
-    .custom-handle:hover::after { transform: scale(1.2); background: var(--interactive-accent); }
-    .custom-handle-right::after { background: var(--interactive-accent); }
-    .task-node-wrapper { position: relative; width: 240px; height: auto; min-height: 80px; background: var(--background-secondary); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease; border: 2px solid var(--background-modifier-border); overflow: hidden; display: flex; flex-direction: column; }
-    .task-node-wrapper:hover { transform: translateY(-2px) scale(1.01); box-shadow: 0 12px 24px rgba(0,0,0,0.12); z-index: 10; }
-    .text-node-wrapper { min-width: 150px; max-width: 300px; background: var(--background-primary-alt); color: var(--text-normal); border-radius: 8px; padding: 12px; font-family: var(--font-text); box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; position: relative; height: auto; border: 2px dashed var(--text-accent); transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease; }
-    .react-flow__node.selected .text-node-wrapper { border-style: solid; border-color: var(--interactive-accent); }
-    .text-node-textarea { background: transparent; border: none; color: inherit; width: 100%; text-align: center; resize: none; font-size: 14px; outline: none; overflow: hidden; }
-    .node-tag { font-size: 10px; padding: 3px 8px; border-radius: 12px; font-weight: 600; background-color: var(--background-modifier-active-hover); color: var(--text-muted); }
-    .edit-btn { opacity: 0; transition: all 0.2s; cursor: pointer; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--background-modifier-hover); color: var(--text-normal); flex-shrink: 0; font-size: 12px;}
-    .task-node-wrapper:hover .edit-btn { opacity: 1; }
-    .edit-btn:hover { background: var(--interactive-accent); color: white; }
-    .open-file-btn { font-size: 9px; color: var(--text-muted); cursor: pointer; padding: 2px 6px; border-radius: 4px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); transition: all 0.2s; display: flex; align-items: center; gap: 4px; max-width: 80px; }
-    .open-file-btn:hover { background: var(--interactive-accent); color: white; border-color: var(--interactive-accent); }
-    .open-file-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .edit-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; pointer-events: all; }
-    .edit-modal { background: var(--background-primary); padding: 24px; border-radius: 16px; width: 480px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); display: flex; flex-direction: column; gap: 16px; border: 1px solid var(--background-modifier-border); position: relative; }
-    .suggestion-list { position: absolute; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 8px; box-shadow: 0 8px 16px rgba(0,0,0,0.2); max-height: 150px; overflow-y: auto; z-index: 200; width: 200px; }
-    .suggestion-item { padding: 6px 12px; font-size: 13px; cursor: pointer; color: var(--text-normal); display: flex; align-items: center; gap: 6px; }
-    .suggestion-item:hover, .suggestion-item.selected { background: var(--interactive-accent); color: white; }
-    .metadata-toolbar { display: flex; gap: 8px; padding: 8px 0; border-top: 1px solid var(--background-modifier-border); margin-top: -8px; }
-    .metadata-btn { padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 14px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); transition: all 0.1s; display: flex; align-items: center; gap: 4px; color: var(--text-muted); }
-    .metadata-btn:hover { background: var(--background-modifier-hover); color: var(--text-normal); transform: translateY(-1px); }
-    .metadata-label { font-size: 11px; }
-    .task-sidebar { position: absolute; top: 10px; left: 10px; bottom: 10px; width: 240px; background: var(--background-secondary); opacity: 0.95; backdrop-filter: blur(20px); border-radius: 16px; border: 1px solid var(--background-modifier-border); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); z-index: 20; display: flex; flex-direction: column; padding: 16px; pointer-events: all; overflow: hidden; }
-    .sidebar-section { margin-bottom: 16px; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    .sidebar-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; }
-    .sidebar-list { overflow-y: auto; flex: 1; padding-right: 4px; scrollbar-width: thin; transition: background 0.2s; border-radius: 8px; }
-    .sidebar-list.drag-over { background: rgba(var(--interactive-accent-rgb), 0.1); border: 2px dashed var(--interactive-accent); }
-    .sidebar-item { font-size: 12px; padding: 8px 10px; margin-bottom: 6px; background: var(--background-primary); border-radius: 8px; cursor: grab; transition: all 0.2s; border-left: 3px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-normal); }
-    .sidebar-item:active { cursor: grabbing; }
-    .sidebar-item:hover { background: var(--background-modifier-hover); transform: translateX(2px); }
-    .item-in-progress { border-left-color: #34c759; } .item-pending { border-left-color: #ff9500; } .item-backlog { border-left-color: #8e8e93; }
-    .react-flow__panel > * { pointer-events: all; }
-`;
+// 移除 REACT_FLOW_CORE_STYLES 和 CUSTOM_STYLES 两个庞大的字符串变量
 
 const STATUS_COLORS = { 'in_progress': '#34c759', 'pending': '#ff9500', 'finished': '#af52de', 'blocked': '#ff3b30', 'backlog': '#8e8e93', 'default': 'var(--text-muted)' };
 const extractTags = (text: string) => { if (!text) return { tags: [], cleanText: '' }; const tagRegex = /#[\w\u4e00-\u9fa5]+(\/[\w\u4e00-\u9fa5]+)*/g; const tags = text.match(tagRegex) || []; const cleanText = text.replace(tagRegex, '').trim(); return { tags, cleanText }; };
@@ -97,12 +33,6 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
   const { tags, cleanText } = extractTags(data.label);
   const statusColor = STATUS_COLORS[data.customStatus as keyof typeof STATUS_COLORS] || STATUS_COLORS['default'];
   
-  const handleCheckboxClick = (e: React.ChangeEvent<HTMLInputElement>) => { 
-    e.stopPropagation(); 
-    data.onToggleStatus(data.id, data.status); 
-};
-  const handleOpenFile = (e: React.MouseEvent) => { e.stopPropagation(); data.onOpenFile(data.path); };
-
   return (
     <div className="task-node-wrapper">
       <Handle type="target" position={Position.Left} isConnectable={isConnectable} className="custom-handle" style={{ left: '-12px', top: '50%', transform: 'translateY(-50%)' }} />
@@ -113,20 +43,29 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
             <div className="edit-btn" onClick={(e) => { e.stopPropagation(); data.onEdit(data); }} title="Edit Task">✎</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-            <input 
-                type="checkbox" 
-                className="custom-checkbox nodrag" // 关键：阻断 React Flow 内部处理
-                checked={data.status === 'x'} 
-                onChange={(e) => data.onToggleStatus(data.id, data.status)} 
-                onClick={(e) => {e.stopPropagation();data.onToggleStatus(data.id, data.status, data.path, data.line);}} // 关键：阻断原生点击冒泡
-                onMouseDown={(e) => e.stopPropagation()} // 关键：阻断原生鼠标按下冒泡
-                style={{ marginTop: '3px' }} 
-            />
+            {/* 之前修复过的 Div 代理点击方案 */}
+            <div 
+                className="nodrag" 
+                onMouseDown={(e) => e.stopPropagation()} 
+                onClick={(e) => {
+                    e.stopPropagation();
+                    data.onToggleStatus(data.id, data.status, data.path, data.line); 
+                }}
+                style={{ display: 'flex', alignItems: 'center', marginTop: '3px', cursor: 'pointer' }}
+            >
+                <input 
+                    type="checkbox" 
+                    className="custom-checkbox" 
+                    checked={data.status === 'x'} 
+                    readOnly
+                    style={{ pointerEvents: 'none', margin: 0 }} 
+                />
+            </div>
             <div style={{ fontSize: '13px', lineHeight: '1.5', color: 'var(--text-normal)', fontWeight: '500', marginBottom: '10px', wordBreak: 'break-word', whiteSpace: 'pre-wrap', opacity: (data.status === 'x' ? 0.6 : 1), textDecoration: (data.status === 'x' ? 'line-through' : 'none') }}>{cleanText || data.label}</div>
           </div>
           <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '8px' }}>
               <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', flex: 1 }}>{tags.map((tag, i) => (<span key={i} className="node-tag">{tag}</span>))}</div>
-              <div className="open-file-btn" onClick={handleOpenFile} title="Open File">↗ <span>{data.file}</span></div>
+              <div className="open-file-btn" onClick={(e) => { e.stopPropagation(); data.onOpenFile(data.path); }} title="Open File">↗ <span>{data.file}</span></div>
           </div>
       </div>
       <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="custom-handle custom-handle-right" style={{ right: '-12px', top: '50%', transform: 'translateY(-50%)' }} />
@@ -191,6 +130,22 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
     );
 };
 
+// 【修复缺失】：补全确认弹窗组件的定义
+const ConfirmModal = ({ message, onConfirm, onClose }: { message: string, onConfirm: () => void, onClose: () => void }) => {
+    return (
+        <div className="edit-overlay" onClick={onClose}>
+            <div className="edit-modal" style={{ width: '320px', alignItems: 'center', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                <h3 style={{ margin: '0 0 10px 0', color: 'var(--text-normal)' }}>Confirm Action</h3>
+                <p style={{ color: 'var(--text-muted)', marginBottom: '20px', fontSize: '14px' }}>{message}</p>
+                <div style={{ display: 'flex', gap: '12px', width: '100%', justifyContent: 'center' }}>
+                    <button onClick={onClose} style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid var(--background-modifier-border)', background: 'transparent', color: 'var(--text-normal)', cursor: 'pointer' }}>Cancel</button>
+                    <button onClick={() => { onConfirm(); onClose(); }} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: 'var(--interactive-accent)', color: 'white', fontWeight: 500, cursor: 'pointer' }}>Confirm</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange }: { nodes: Node[], onNodeCenter: (nodeId: string) => void, onStatusChange: (id: string, status: string) => void }) => {
     const tasks = nodes.filter(n => n.type === 'task');
     const inProgress = tasks.filter(n => n.data.customStatus === 'in_progress');
@@ -229,7 +184,21 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     const [tempName, setTempName] = React.useState('');
     React.useEffect(() => { setIsRenaming(false); setTempName(currentBoard?.name || ''); }, [currentBoard]);
     const handleSaveName = () => { if (tempName.trim()) onRenameBoard(tempName); setIsRenaming(false); };
-    const handleDelete = () => { if (boards.length <= 1) { new Notice("Cannot delete the only board."); return; } if (window.confirm(`Delete board "${currentBoard?.name || 'Board'}"?`)) onDeleteBoard(activeBoardId); };
+    
+    // 微优化：为了防范未来可能出现的 UI 锁死，我们用 setTimeout 将 window.confirm 移出主同步线程
+    const handleDelete = () => { 
+        if (boards.length <= 1) { new Notice("Cannot delete the only board."); return; } 
+        setTimeout(() => {
+            if (window.confirm(`Delete board "${currentBoard?.name || 'Board'}"?`)) onDeleteBoard(activeBoardId);
+        }, 10);
+    };
+
+    const handleResetClick = () => {
+        setTimeout(() => {
+            onResetView();
+        }, 10);
+    };
+
     const stopPropagation = (e: React.MouseEvent | React.KeyboardEvent) => { e.stopPropagation(); };
     const stopKeys = (e: React.KeyboardEvent) => e.stopPropagation();
 
@@ -237,8 +206,9 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     const activeBtnStyle = { ...btnStyle, background: 'var(--interactive-accent)', color: 'white', border: 'none', boxShadow: '0 2px 8px rgba(var(--interactive-accent-rgb), 0.3)' };
     const inputStyle = { background: 'var(--background-modifier-form-field)', border: 'none', color: 'var(--text-normal)', padding: '8px', borderRadius: '8px', width: '100%', marginBottom: '8px', fontSize: '12px' };
     
-    return (<Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '20px', margin: 0, background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '300px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={onAddBoard} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={onAutoLayout}>⚡ Layout</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={onResetView}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}><input style={inputStyle} placeholder="Filter Tags..." value={currentBoard.filters.tags.join(', ')} onChange={(e) => onUpdateFilter('tags', e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} /><input style={inputStyle} placeholder="Filter Path..." value={currentBoard.filters.folders.join(', ')} onChange={(e) => onUpdateFilter('folders', e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} /><div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>{[' ', '/', 'x'].map(status => (<label key={status} style={{fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-normal)'}}><input type="checkbox" className="filter-checkbox" checked={currentBoard.filters.status.includes(status)} onChange={() => onUpdateFilter('status', status)} /> {status === ' ' ? 'Todo' : status === '/' ? 'Doing' : 'Done'}</label>))}</div></div>)}</Panel>);
+    return (<Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '20px', margin: 0, background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '300px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={onAddBoard} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={onAutoLayout}>⚡ Layout</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleResetClick}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}><input style={inputStyle} placeholder="Filter Tags..." value={currentBoard.filters.tags.join(', ')} onChange={(e) => onUpdateFilter('tags', e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} /><input style={inputStyle} placeholder="Filter Path..." value={currentBoard.filters.folders.join(', ')} onChange={(e) => onUpdateFilter('folders', e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} /><div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>{[' ', '/', 'x'].map(status => (<label key={status} style={{fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-normal)'}}><input type="checkbox" className="filter-checkbox" checked={currentBoard.filters.status.includes(status)} onChange={() => onUpdateFilter('status', status)} /> {status === ' ' ? 'Todo' : status === '/' ? 'Doing' : 'Done'}</label>))}</div></div>)}</Panel>);
 };
+
 const HelpPanel = ({ onClose }: { onClose: () => void }) => {
     const [lang, setLang] = React.useState<'en' | 'zh'>('zh');
 
@@ -246,69 +216,23 @@ const HelpPanel = ({ onClose }: { onClose: () => void }) => {
         en: {
             title: '📖 User Guide',
             sections: [
-                { heading: '🔗 Connect tasks', items: [
-                    'Drag from a node\'s right dot to another node\'s left dot to create a dependency',
-                    'Drag to empty space to quickly create a sub-task',
-                    'Right-click a connection line to remove it',
-                ]},
-                { heading: '📝 Text nodes', items: [
-                    'Right-click canvas → Add Note to create a text annotation',
-                    'Text nodes can connect to tasks as category labels',
-                ]},
-                { heading: '✅ Task actions', items: [
-                    'Click the checkbox to toggle completion (auto-syncs to source file)',
-                    'Completed tasks in branches keep their position',
-                    'Right-click a task to change status',
-                ]},
-                { heading: '🖱️  Canvas', items: [
-                    'Left-drag on empty space: box-select multiple nodes',
-                    'Middle / right-drag: pan canvas',
-                    'Scroll wheel: zoom',
-                    'Hold Shift + click: multi-select',
-                ]},
-                { heading: '📐 Layout', items: [
-                    'Click ⚡ Layout to auto-arrange all nodes',
-                    'Preserves the vertical order you set manually',
-                    'Parent nodes auto-center to their children',
-                ]},
-                { heading: '📋  Sidebar', items: [
-                    'Click a task name to fly to that node',
-                    'Drag tasks between status groups to change status',
-                ]},
+                { heading: '🔗 Connect tasks', items: ['Drag from a node\'s right dot to another node\'s left dot to create a dependency', 'Drag to empty space to quickly create a sub-task', 'Right-click a connection line to remove it']},
+                { heading: '📝 Text nodes', items: ['Right-click canvas → Add Note to create a text annotation', 'Text nodes can connect to tasks as category labels']},
+                { heading: '✅ Task actions', items: ['Click the checkbox to toggle completion (auto-syncs to source file)', 'Completed tasks in branches keep their position', 'Right-click a task to change status']},
+                { heading: '🖱️  Canvas', items: ['Left-drag on empty space: box-select multiple nodes', 'Middle / right-drag: pan canvas', 'Scroll wheel: zoom', 'Hold Shift + click: multi-select']},
+                { heading: '📐 Layout', items: ['Click ⚡ Layout to auto-arrange all nodes', 'Preserves the vertical order you set manually', 'Parent nodes auto-center to their children']},
+                { heading: '📋  Sidebar', items: ['Click a task name to fly to that node', 'Drag tasks between status groups to change status']},
             ]
         },
         zh: {
             title: '📖 使用说明',
             sections: [
-                { heading: '🔗 连接任务', items: [
-                    '从节点右侧圆点拖拽到另一节点左侧圆点，创建依赖关系',
-                    '拖拽到空白处可快速创建子任务',
-                    '右键点击连线可删除连接',
-                ]},
-                { heading: '📝 文本节点', items: [
-                    '右键画布空白处 → Add Note，创建文本标注',
-                    '文本节点可连接到任务，作为分类标签',
-                ]},
-                { heading: '✅ 任务操作', items: [
-                    '点击复选框切换完成状态（自动同步源文件）',
-                    '分支中的已完成任务会保留位置，不会消失',
-                    '右键任务可更改状态',
-                ]},
-                { heading: '🖱️ 画布交互', items: [
-                    '左键拖拽空白：框选多个节点',
-                    '中键 / 右键拖拽：平移画布',
-                    '滚轮：缩放',
-                    '按住 Shift + 点击：多选节点',
-                ]},
-                { heading: '📐 Layout', items: [
-                    '点击 ⚡ Layout 自动排列节点',
-                    '保留你手动调整的子节点纵向顺序',
-                    '父节点自动居中对齐子节点',
-                ]},
-                { heading: '📋 侧边栏', items: [
-                    '点击任务名跳转至该节点',
-                    '拖拽任务到不同状态分组可快速变更状态',
-                ]},
+                { heading: '🔗 连接任务', items: ['从节点右侧圆点拖拽到另一节点左侧圆点，创建依赖关系', '拖拽到空白处可快速创建子任务', '右键点击连线可删除连接']},
+                { heading: '📝 文本节点', items: ['右键画布空白处 → Add Note，创建文本标注', '文本节点可连接到任务，作为分类标签']},
+                { heading: '✅ 任务操作', items: ['点击复选框切换完成状态（自动同步源文件）', '分支中的已完成任务会保留位置，不会消失', '右键任务可更改状态']},
+                { heading: '🖱️ 画布交互', items: ['左键拖拽空白：框选多个节点', '中键 / 右键拖拽：平移画布', '滚轮：缩放', '按住 Shift + 点击：多选节点']},
+                { heading: '📐 Layout', items: ['点击 ⚡ Layout 自动排列节点', '保留你手动调整的子节点纵向顺序', '父节点自动居中对齐子节点']},
+                { heading: '📋 侧边栏', items: ['点击任务名跳转至该节点', '拖拽任务到不同状态分组可快速变更状态']},
             ]
         }
     };
@@ -344,17 +268,15 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const [editTarget, setEditTarget] = React.useState<{id: string, text: string, path: string, line: number} | null>(null);
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
   const [allTags, setAllTags] = React.useState<string[]>([]);
-  const [showHelp, setShowHelp] = React.useState(false); // 需求2: 帮助面板状态
+  const [showHelp, setShowHelp] = React.useState(false); 
+  // 【新增】接管所有敏感操作的确认弹窗状态
+  const [confirmReq, setConfirmReq] = React.useState<{ message: string, action: () => void } | null>(null);
+  
   const reactFlowInstance = useReactFlow();
   const connectionStartRef = React.useRef<{ nodeId: string | null; handleType: string | null }>({ nodeId: null, handleType: null });
   const connectionMadeRef = React.useRef(false);
   
-  React.useEffect(() => {
-    const styleId = 'task-graph-styles';
-    let styleEl = document.getElementById(styleId);
-    if (!styleEl) { styleEl = document.createElement('style'); styleEl.id = styleId; document.head.appendChild(styleEl); }
-    styleEl.innerHTML = REACT_FLOW_CORE_STYLES + CUSTOM_STYLES;
-  }, []);
+  // 核心改动：彻底删除了动态插入 <style> 的 useEffect 逻辑
 
   const activeBoard = plugin.settings.boards.find(b => b.id === activeBoardId) || plugin.settings.boards[0];
 
@@ -415,11 +337,9 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   }, [nodes]);
 
   const handleToggleTask = async (id: string, currentStatus: string, path: string, line: number) => {
-      
       const newStatus = (currentStatus === ' ' || currentStatus === '/') ? 'x' : ' ';
       const newCustomStatus = newStatus === 'x' ? 'finished' : 'backlog'; 
       
-      // 乐观更新 UI
       setNodes(nds => nds.map(n => { 
           if (n.id === id) { 
               return { ...n, data: { ...n.data, status: newStatus, customStatus: newCustomStatus } }; 
@@ -438,11 +358,9 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       if (file instanceof TFile) {
            const content = await plugin.app.vault.read(file); 
            const lines = content.split('\n');
-           // 3. 直接使用传入的 line
            let currentLineText = lines[line]; 
            if (currentLineText === undefined) return;
 
-           // --- 下面保留我们之前写好的完美正则解析逻辑 ---
            const lineRegex = /^(\s*- \[[x\s\/bc!-]\]\s)(.*?)(?:\s+(\^[a-zA-Z0-9\-]+))?$/;
            const match = currentLineText.match(lineRegex);
 
@@ -583,7 +501,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
   const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
   
-  // 🌟 幂等布局引擎：父子中心对齐 + 保留用户排序 + 防重叠
+  // 🌟 幂等布局引擎：父子中心对齐 + 保留用户排序 + 防重叠 + 自动镜头缩放
   const handleAutoLayout = async () => {
       // --- 1. 构建图结构 ---
       const undirectedAdj: Record<string, string[]> = {};
@@ -650,10 +568,9 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       const layout: Record<string, { x: number; y: number }> = {};
       const COL_WIDTH = 320;
       const COMPONENT_GAP = 60;
-      const MIN_GAP = 30; // 节点之间的最小空隙
+      const MIN_GAP = 30; 
       const DEFAULT_NODE_HEIGHT = 100;
 
-      // 需求4: 逐节点测量实际 DOM 高度
       const nodeHeightMap: Record<string, number> = {};
       const zoom = reactFlowInstance?.getZoom() ?? 1;
       nodes.forEach(n => {
@@ -710,8 +627,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               levelGroups[Number(lvl)] = getUserOrderRank(levelGroups[Number(lvl)]!);
           }
 
-          // 需求4: 使用实际高度的子树分配
-          // posY 存实际像素Y坐标（不再是 slot）
           const posY: Record<string, number> = {};
           const assignedNodes = new Set<string>();
 
@@ -719,7 +634,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               return (directedAdj[id] || []).filter(cid => comp.includes(cid));
           };
 
-          // 计算子树需要的总高度
           const subtreeHeight: Record<string, number> = {};
           const computeSubtreeHeight = (id: string, visitedCalc: Set<string>): number => {
               if (subtreeHeight[id] !== undefined) return subtreeHeight[id]!;
@@ -750,7 +664,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           const visitedCalc = new Set<string>();
           comp.forEach(id => computeSubtreeHeight(id, visitedCalc));
 
-          // 递归分配位置
           const assignPositions = (id: string, startY: number): number => {
               if (assignedNodes.has(id)) return 0;
               assignedNodes.add(id);
@@ -774,7 +687,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
                   totalUsed += used;
               });
 
-              // 父节点居中于所有子节点（含已分配的）
               const allChildYs = children
                   .map(cid => posY[cid])
                   .filter((y): y is number => y !== undefined);
@@ -799,7 +711,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               return Math.max(totalUsed, nodeH + MIN_GAP);
           };
 
-          // 找根节点
           const compInDegree: Record<string, number> = {};
           comp.forEach(id => { compInDegree[id] = 0; });
           edges.forEach(e => {
@@ -817,7 +728,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               globalStartY += used;
           });
 
-          // 未分配的节点
           comp.forEach(id => {
               if (posY[id] === undefined) {
                   posY[id] = globalStartY;
@@ -825,7 +735,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               }
           });
 
-          // 需求4: 同层防重叠 — 用实际节点高度检测
           for (let lvl = 0; lvl <= maxLevel; lvl++) {
               const group = levelGroups[lvl] || [];
               const sorted = [...group].sort((a, b) => (posY[a] ?? 0) - (posY[b] ?? 0));
@@ -840,7 +749,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               }
           }
 
-          // 转坐标
           const compLayout: Record<string, { x: number; y: number }> = {};
           comp.forEach(id => {
               compLayout[id] = {
@@ -849,12 +757,10 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               };
           });
 
-          // 归一化
           const allYs = Object.values(compLayout).map(p => p.y);
           const minY = Math.min(...allYs);
           Object.values(compLayout).forEach(p => { p.y -= minY; });
 
-          // 计算分量总高度（含最后一个节点的高度）
           let compMaxBottom = 0;
           comp.forEach(id => {
               const y = compLayout[id]?.y ?? 0;
@@ -881,7 +787,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           globalY += cr.height + COMPONENT_GAP;
       });
 
-      // 孤立活跃节点
       if (isolatedActiveIds.length > 0) {
           const sorted = getUserOrderRank(isolatedActiveIds);
           const COLS = 3;
@@ -896,7 +801,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           globalY = startY + (maxRow + 1) * ISO_ROW_GAP + COMPONENT_GAP;
       }
 
-      // 孤立已完成节点
       if (isolatedFinishedIds.length > 0) {
           const COLS = 4;
           const COMPACT_GAP = 100;
@@ -938,23 +842,51 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       }
 
       new Notice("Smart layout applied!");
+      
+      // 【破与离：提取有效焦点并实施优雅降级】
+      // 1. 过滤出所有尚未完成的核心任务
+      const activeNodesToFocus = nodes.filter(n => {
+          if (n.type === 'task') {
+              const isFinished = n.data.status === 'x' || n.data.customStatus === 'finished';
+              return !isFinished;
+          }
+          // 排除纯文本节点参与焦点计算，让镜头绝对纯粹
+          return false;
+      });
+
+      // 2. 降级保护：如果任务全部完成了，就退回到展示所有节点，防止镜头失控
+      const nodesToFit = activeNodesToFocus.length > 0 ? activeNodesToFocus : nodes;
+      
+      // 3. 剥离冗余数据，只保留 ReactFlow 引擎需要的 id 映射
+      const fitViewNodes = nodesToFit.map(n => ({ id: n.id }));
+
+      // 4. 执行带目标约束的平滑运镜
+      setTimeout(() => {
+          reactFlowInstance.fitView({ 
+              nodes: fitViewNodes,  // 注入我们精准计算的焦点矩阵
+              duration: 800, 
+              padding: 0.1 
+          });
+      }, 50);
   };
 
+  // 【修改】调用自定义确认弹窗状态，彻底舍弃 window.confirm
   const handleResetView = async () => { 
-      if (!window.confirm("Clear all positions?")) return; 
-      
-      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
-      if (board) {
-          const newLayout = {};
-          const newTextNodes = board.data.textNodes.map((tn, index) => ({
-              ...tn,
-              x: (index % 3) * 320,
-              y: Math.floor(index / 3) * 200
-          }));
-          await plugin.saveBoardData(activeBoardId, { layout: newLayout, textNodes: newTextNodes }); 
-          setRefreshKey(prev => prev + 1); 
-          new Notice("View reset."); 
-      }
+      setConfirmReq({
+          message: "Clear all positions?",
+          action: async () => {
+              const board = plugin.settings.boards.find(b => b.id === activeBoardId);
+              if (board) {
+                  const newLayout = {};
+                  const newTextNodes = board.data.textNodes.map((tn, index) => ({
+                      ...tn, x: (index % 3) * 320, y: Math.floor(index / 3) * 200
+                  }));
+                  await plugin.saveBoardData(activeBoardId, { layout: newLayout, textNodes: newTextNodes }); 
+                  setRefreshKey(prev => prev + 1); 
+                  new Notice("View reset."); 
+              }
+          }
+      });
   };
   
   const handleSidebarClick = (nodeId: string) => { const node = nodes.find(n => n.id === nodeId); if (node) { reactFlowInstance.setCenter(node.position.x + 120, node.position.y + 60, { zoom: 1.2, duration: 800 }); setNodes(nds => nds.map(n => ({ ...n, selected: n.id === nodeId }))); } };
@@ -983,9 +915,9 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       >
         <Background gap={24} color="rgba(150,150,150,0.1)" size={1.5} />
         <GraphToolbar />
-        <ControlPanel boards={plugin.settings.boards} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onDeleteBoard={handleDeleteBoard} onAutoLayout={handleAutoLayout} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} />
+        {/* 【修改】向 ControlPanel 注入 onRequestConfirm 句柄 */}
+        <ControlPanel boards={plugin.settings.boards} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onDeleteBoard={handleDeleteBoard} onAutoLayout={handleAutoLayout} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} onRequestConfirm={(msg: string, action: () => void) => setConfirmReq({ message: msg, action })} />
         
-        {/* 需求2: 帮助按钮 — 放在 ControlPanel 上方偏右 */}
         <Panel position="bottom-right" style={{ margin: 0, zIndex: 99, pointerEvents: 'none' }}>
             <div style={{ position: 'fixed', bottom: 'calc(20px + 200px)', right: '28px', pointerEvents: 'all' }}>
                 <div style={{ position: 'relative' }}>
@@ -1009,11 +941,14 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       {createTarget && (
           <EditTaskModal initialText="" onClose={() => setCreateTarget(null)} onSave={(text) => handleCreateTask(text)} allTags={allTags} />
       )}
+
+      {/* 【新增】将确认弹窗渲染在最高层级 */}
+      {confirmReq && (
+          <ConfirmModal message={confirmReq.message} onConfirm={confirmReq.action} onClose={() => setConfirmReq(null)} />
+      )}
     </div>
   );
 };
-
-// ...existing code... (TaskGraphWithProvider, TaskGraphView class stay the same)
 
 const TaskGraphWithProvider = ({ plugin }: { plugin: TaskGraphPlugin }) => { return ( <ReactFlowProvider> <TaskGraphComponent plugin={plugin} /></ReactFlowProvider> ); };
 export class TaskGraphView extends ItemView {
@@ -1024,6 +959,7 @@ export class TaskGraphView extends ItemView {
       const container = this.containerEl.children[1] as HTMLElement; 
       if (!container) return;
       container.empty(); 
+      // 这里的内联宽高样式是安全的，仅作用于容器
       container.setAttr('style', 'height: 100%; width: 100%; overflow: hidden;'); 
       this.root = createRoot(container); 
       this.root.render(<React.StrictMode><TaskGraphWithProvider plugin={this.plugin} /></React.StrictMode>); 

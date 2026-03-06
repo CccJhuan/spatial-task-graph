@@ -1,17 +1,79 @@
-/*
+/* -------------------------------------------------------------------------- */
+/* React Flow 核心样式 (搬运自原 REACT_FLOW_CORE_STYLES)                        */
+/* -------------------------------------------------------------------------- */
+.react-flow{direction:ltr;width:100%;height:100%;position:relative;z-index:0;overflow:hidden}
+.react-flow__background{background-color:transparent;z-index:-1;width:100%;height:100%;top:0;left:0;position:absolute}
+.react-flow__container{position:absolute;width:100%;height:100%;top:0;left:0}
+.react-flow__pane{z-index:1;cursor:grab;width:100%;height:100%;top:0;left:0;position:absolute}
+.react-flow__pane.dragging{cursor:grabbing}
+.react-flow__viewport{transform-origin:0 0;z-index:2;pointer-events:none;width:100%;height:100%;top:0;left:0;position:absolute}
+.react-flow__renderer{z-index:4}
+.react-flow__selection{z-index:1001;position:absolute;top:0;left:0;pointer-events:none}
+.react-flow__nodes{pointer-events:none;transform-origin:0 0}
+.react-flow__node{position:absolute;user-select:none;pointer-events:all;transform-origin:0 0;box-sizing:border-box;cursor:default}
+.react-flow__edges{pointer-events:none;overflow:visible}
+.react-flow__edge{pointer-events:all}
+.react-flow__edge-text{pointer-events:none;user-select:none}
+.react-flow__handle{position:absolute;pointer-events:all;min-width:5px;min-height:5px;width:6px;height:6px;background:#555;border:1px solid #fff;border-radius:100%;z-index:1}
+.react-flow__minimap{z-index:5}
+.react-flow__panel{z-index:10; position:absolute; pointer-events:none;}
+.react-flow__selection { background: rgba(var(--interactive-accent-rgb), 0.1); border: 1px solid var(--interactive-accent); border-radius: 6px; }
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+/* -------------------------------------------------------------------------- */
+/* 任务节点与交互自定义样式 (搬运自原 CUSTOM_STYLES)                             */
+/* -------------------------------------------------------------------------- */
+.task-graph-container { width: 100%; height: 100%; position: relative; background: var(--background-primary); font-family: var(--font-interface); color: var(--text-normal); }
+input[type="checkbox"].custom-checkbox { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; border: 1.5px solid var(--text-muted); border-radius: 50%; margin: 0 8px 0 0; padding: 0; cursor: pointer; position: relative; display: inline-flex; align-items: center; justify-content: center; background-color: transparent; flex-shrink: 0; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+input[type="checkbox"].custom-checkbox:hover { border-color: var(--interactive-accent); background-color: rgba(var(--interactive-accent-rgb), 0.1); }
+input[type="checkbox"].custom-checkbox:checked { background-color: var(--interactive-accent); border-color: var(--interactive-accent); }
+input[type="checkbox"].custom-checkbox:checked::after { content: ''; width: 100%; height: 100%; background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'); background-size: 12px; background-position: center; background-repeat: no-repeat; }
+input[type="checkbox"].filter-checkbox { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; border: 1px solid var(--text-muted); border-radius: 4px; margin-right: 6px; cursor: pointer; position: relative; }
+input[type="checkbox"].filter-checkbox:checked { background-color: var(--text-normal); border-color: var(--text-normal); }
+input[type="checkbox"].filter-checkbox:checked::after { content: ''; position: absolute; top: 1px; left: 4px; width: 4px; height: 8px; border: solid var(--background-primary); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.custom-handle { width: 24px !important; height: 24px !important; background: transparent !important; border: none !important; display: flex; align-items: center; justify-content: center; z-index: 20 !important; }
+.custom-handle::after { content: ""; display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); border: 2px solid var(--background-primary); transition: transform 0.2s, background 0.2s; }
+.custom-handle:hover::after { transform: scale(1.2); background: var(--interactive-accent); }
+.custom-handle-right::after { background: var(--interactive-accent); }
+.task-node-wrapper { position: relative; width: 240px; height: auto; min-height: 80px; background: var(--background-secondary); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease; border: 2px solid var(--background-modifier-border); overflow: hidden; display: flex; flex-direction: column; }
+.task-node-wrapper:hover { transform: translateY(-2px) scale(1.01); box-shadow: 0 12px 24px rgba(0,0,0,0.12); z-index: 10; }
+.text-node-wrapper { min-width: 150px; max-width: 300px; background: var(--background-primary-alt); color: var(--text-normal); border-radius: 8px; padding: 12px; font-family: var(--font-text); box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; position: relative; height: auto; border: 2px dashed var(--text-accent); transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease; }
+.react-flow__node.selected .text-node-wrapper { border-style: solid; border-color: var(--interactive-accent); }
+.text-node-textarea { background: transparent; border: none; color: inherit; width: 100%; text-align: center; resize: none; font-size: 14px; outline: none; overflow: hidden; }
+.node-tag { font-size: 10px; padding: 3px 8px; border-radius: 12px; font-weight: 600; background-color: var(--background-modifier-active-hover); color: var(--text-muted); }
+.edit-btn { opacity: 0; transition: all 0.2s; cursor: pointer; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--background-modifier-hover); color: var(--text-normal); flex-shrink: 0; font-size: 12px;}
+.task-node-wrapper:hover .edit-btn { opacity: 1; }
+.edit-btn:hover { background: var(--interactive-accent); color: white; }
+.open-file-btn { font-size: 9px; color: var(--text-muted); cursor: pointer; padding: 2px 6px; border-radius: 4px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); transition: all 0.2s; display: flex; align-items: center; gap: 4px; max-width: 80px; }
+.open-file-btn:hover { background: var(--interactive-accent); color: white; border-color: var(--interactive-accent); }
+.open-file-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.edit-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; pointer-events: all; }
+.edit-modal { background: var(--background-primary); padding: 24px; border-radius: 16px; width: 480px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); display: flex; flex-direction: column; gap: 16px; border: 1px solid var(--background-modifier-border); position: relative; }
+.suggestion-list { position: absolute; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 8px; box-shadow: 0 8px 16px rgba(0,0,0,0.2); max-height: 150px; overflow-y: auto; z-index: 200; width: 200px; }
+.suggestion-item { padding: 6px 12px; font-size: 13px; cursor: pointer; color: var(--text-normal); display: flex; align-items: center; gap: 6px; }
+.suggestion-item:hover, .suggestion-item.selected { background: var(--interactive-accent); color: white; }
+.metadata-toolbar { display: flex; gap: 8px; padding: 8px 0; border-top: 1px solid var(--background-modifier-border); margin-top: -8px; }
+.metadata-btn { padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 14px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); transition: all 0.1s; display: flex; align-items: center; gap: 4px; color: var(--text-muted); }
+.metadata-btn:hover { background: var(--background-modifier-hover); color: var(--text-normal); transform: translateY(-1px); }
+.metadata-label { font-size: 11px; }
+.task-sidebar { position: absolute; top: 10px; left: 10px; bottom: 10px; width: 240px; background: var(--background-secondary); opacity: 0.95; backdrop-filter: blur(20px); border-radius: 16px; border: 1px solid var(--background-modifier-border); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); z-index: 20; display: flex; flex-direction: column; padding: 16px; pointer-events: all; overflow: hidden; }
+.sidebar-section { margin-bottom: 16px; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sidebar-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; }
+.sidebar-list { overflow-y: auto; flex: 1; padding-right: 4px; scrollbar-width: thin; transition: background 0.2s; border-radius: 8px; }
+.sidebar-list.drag-over { background: rgba(var(--interactive-accent-rgb), 0.1); border: 2px dashed var(--interactive-accent); }
+.sidebar-item { font-size: 12px; padding: 8px 10px; margin-bottom: 6px; background: var(--background-primary); border-radius: 8px; cursor: grab; transition: all 0.2s; border-left: 3px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-normal); }
+.sidebar-item:active { cursor: grabbing; }
+.sidebar-item:hover { background: var(--background-modifier-hover); transform: translateX(2px); }
+.item-in-progress { border-left-color: #34c759; } .item-pending { border-left-color: #ff9500; } .item-backlog { border-left-color: #8e8e93; }
+.react-flow__panel > * { pointer-events: all; }
 
-If your plugin does not need CSS, delete this file.
-
-*/
+/* -------------------------------------------------------------------------- */
+/* 其他原有样式 (保持不变)                                                       */
+/* -------------------------------------------------------------------------- */
 .spatial-task-graph-root {
     --task-node-bg: var(--background-secondary);
     --task-node-border: var(--background-modifier-border);
 }
 
-/* 需求3: 选中节点 — 增强边框和光晕 */
 .react-flow__node.selected .task-node-wrapper,
 .react-flow__node.selected .text-node-wrapper {
     border: 2.5px solid var(--interactive-accent) !important;
@@ -19,7 +81,6 @@ If your plugin does not need CSS, delete this file.
                 0 0 16px rgba(var(--interactive-accent-rgb), 0.15) !important;
 }
 
-/* 需求3: 拖动节点 — 更显眼的高亮 + 抬起效果 */
 .react-flow__node.dragging .task-node-wrapper,
 .react-flow__node.dragging .text-node-wrapper {
     border: 3px solid var(--text-accent) !important;
@@ -28,7 +89,6 @@ If your plugin does not need CSS, delete this file.
     z-index: 1000 !important;
 }
 
-/* 需求2: 确保选中状态下 checkbox 仍然可点击 */
 .react-flow__node.selected .custom-checkbox,
 .react-flow__node .custom-checkbox {
     pointer-events: all !important;
@@ -37,7 +97,6 @@ If your plugin does not need CSS, delete this file.
     cursor: pointer !important;
 }
 
-/* 需求2: 帮助按钮 */
 .task-graph-help-btn {
     width: 32px;
     height: 32px;
@@ -63,7 +122,6 @@ If your plugin does not need CSS, delete this file.
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
-/* 需求2: 帮助面板 */
 .task-graph-help-panel {
     position: absolute;
     bottom: 44px;
