@@ -23,14 +23,22 @@ export interface GraphBoard {
 	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; }
 }
 
-interface TaskGraphSettings { boards: GraphBoard[]; lastActiveBoardId: string; }
+interface TaskGraphSettings { 
+    boards: GraphBoard[]; 
+    lastActiveBoardId: string; 
+    autoFitAfterLayout: boolean; // 新增：排版后是否自动缩放
+}
 
 const DEFAULT_BOARD: GraphBoard = {
 	id: 'default', name: 'Main board',
 	filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'], tagMode: 'OR' },
 	data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] }
 };
-const DEFAULT_SETTINGS: TaskGraphSettings = { boards: [DEFAULT_BOARD], lastActiveBoardId: 'default' };
+const DEFAULT_SETTINGS: TaskGraphSettings = { 
+    boards: [DEFAULT_BOARD], 
+    lastActiveBoardId: 'default',
+    autoFitAfterLayout: true // 默认开启
+};
 
 export default class TaskGraphPlugin extends Plugin {
 	settings: TaskGraphSettings;

@@ -23,5 +23,14 @@ export class TaskGraphSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     await this.plugin.saveSettings();
                 }));
+        new Setting(containerEl)
+        .setName('Auto-fit after layout')
+        .setDesc('Whether to zoom out to show all nodes after running smart layout.')
+        .addToggle(toggle => toggle
+            .setValue(this.plugin.settings.autoFitAfterLayout)
+            .onChange(async (value) => {
+                this.plugin.settings.autoFitAfterLayout = value;
+                await this.plugin.saveSettings();
+            }));
     }
 }

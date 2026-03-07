@@ -1012,11 +1012,22 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
 
       new Notice("Smart layout applied.");
       
-      const activeNodesToFocus = nodes.filter(n => { if (isTaskNode(n)) return !(n.data.status === 'x' || n.data.customStatus === 'finished'); return false; });
-      const nodesToFit = activeNodesToFocus.length > 0 ? activeNodesToFocus : nodes;
-      const fitViewNodes = nodesToFit.map(n => ({ id: n.id }));
+      if (plugin.settings.autoFitAfterLayout) {
+          const activeNodesToFocus = nodes.filter(n => { 
+              if (isTaskNode(n)) return !(n.data.status === 'x' || n.data.customStatus === 'finished'); 
+              return false; 
+          });
+          const nodesToFit = activeNodesToFocus.length > 0 ? activeNodesToFocus : nodes;
+          const fitViewNodes = nodesToFit.map(n => ({ id: n.id }));
 
-      setTimeout(() => { reactFlowInstance.fitView({ nodes: fitViewNodes, duration: 800, padding: 0.1 }); }, 50);
+          setTimeout(() => { 
+              reactFlowInstance.fitView({ nodes: fitViewNodes, duration: 800, padding: 0.1 }); 
+          }, 50);
+      } else {
+          // 如果关闭了自动缩放，则不执行 fitView，保持当前视图位置
+          console.log("Auto-fit skipped per user settings.");
+      }
+
   };
 
   const layoutRef = React.useRef(handleAutoLayout);
