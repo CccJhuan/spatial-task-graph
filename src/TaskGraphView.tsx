@@ -1025,7 +1025,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           }, 50);
       } else {
           // 如果关闭了自动缩放，则不执行 fitView，保持当前视图位置
-          console.log("Auto-fit skipped per user settings.");
+          console.debug("Auto-fit skipped per user settings.");
       }
 
   };

@@ -44,9 +44,11 @@ const context = await esbuild.context({
 
 if (prod) {
     await context.rebuild();
-    console.log("✅ 生产环境构建完成！main.js 已更新。");
+    // 修改点：将 log 改为 warn
+    console.warn("✅ 生产环境构建完成！main.js 已更新。");
     process.exit(0);
 } else {
     await context.watch();
-    console.log("👀 开发模式已启动：正在监听文件修改...");
+    // 修改点：将 log 改为 warn
+    console.warn("👀 开发模式已启动：正在监听文件修改...");
 }
