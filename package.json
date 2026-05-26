@@ -1,7 +1,7 @@
 {
     "name": "spatial-task-graph",
     "version": "1.1.0",
-    "description": "Visualize your Obsidian tasks on an infinite canvas. Features auto-layout, mind-map style connections, Apple-style UI, and two-way sync with markdown files.",
+    "description": "Visualize markdown tasks on an infinite canvas with auto-layout, mind-map style connections, Apple-style UI, and two-way sync.",
     "main": "main.js",
     "type": "module",
     "scripts": {

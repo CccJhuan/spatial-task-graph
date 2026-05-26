@@ -1,6 +1,6 @@
-# Spatial Task Graph for Obsidian
+# Spatial Task Graph
 
-Spatial Task Graph transforms your linear Obsidian tasks into a dynamic, interactive infinite canvas. Visualize dependencies, manage workflows with a Kanban-style sidebar, and organize your thoughts spatially—all with a premium Apple-style aesthetic.
+Spatial Task Graph transforms your linear markdown tasks into a dynamic, interactive infinite canvas. Visualize dependencies, manage workflows with a Kanban-style sidebar, and organize your thoughts spatially—all with a premium Apple-style aesthetic.
 
 ![Main Interface Preview](images/main-interface.png)
 *(Above: A preview of the Spatial Task Graph infinite canvas and control HUD)*
@@ -42,7 +42,7 @@ Right-click any task node to quickly change its priority or status color via the
 
 ### Manual Installation
 1. Download `main.js`, `manifest.json`, and `styles.css` from the [Latest Release](https://github.com/your-repo/releases).
-2. Create a folder `obsidian-spatial-task-graph` in your vault's `.obsidian/plugins/` directory.
+2. Create a folder `spatial-task-graph` in your vault's `.obsidian/plugins/` directory.
 3. Move the files into that folder.
 4. Reload Obsidian and enable the plugin.
 
