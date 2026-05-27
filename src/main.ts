@@ -29,6 +29,10 @@ interface TaskGraphSettings {
     autoFitAfterLayout: boolean; // 新增：排版后是否自动缩放
 }
 
+interface CachedFilesMetadataCache {
+    getCachedFiles(): string[];
+}
+
 const DEFAULT_BOARD: GraphBoard = {
 	id: 'default', name: 'Main board',
 	filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'], tagMode: 'OR' },
@@ -106,9 +110,13 @@ export default class TaskGraphPlugin extends Plugin {
 	}
 
     async initializeCache() {
-        const files = this.app.vault.getMarkdownFiles();
-        for (const file of files) {
-            await this.updateFileCache(file, false); 
+        const cachedPaths = (this.app.metadataCache as unknown as CachedFilesMetadataCache).getCachedFiles();
+        for (const path of cachedPaths) {
+            if (!path.endsWith('.md')) continue;
+            const file = this.app.vault.getAbstractFileByPath(path);
+            if (file instanceof TFile) {
+                await this.updateFileCache(file, false);
+            }
         }
         this.isCacheInitialized = true;
         this.debouncedRefresh();

@@ -1,6 +1,6 @@
 {
     "name": "spatial-task-graph",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "description": "Visualize markdown tasks on an infinite canvas with auto-layout, mind-map style connections, Apple-style UI, and two-way sync.",
     "main": "main.js",
     "type": "module",
@@ -21,8 +21,8 @@
     "devDependencies": {
         "@eslint/js": "9.30.1",
         "@types/node": "^16.11.6",
-        "@types/react": "^19.2.14",
-        "@types/react-dom": "^19.2.3",
+        "@types/react": "^18.3.23",
+        "@types/react-dom": "^18.3.7",
         "@typescript-eslint/eslint-plugin": "^8.35.1",
         "@typescript-eslint/parser": "^8.35.1",
         "esbuild": "0.25.5",
@@ -36,8 +36,8 @@
         "typescript-eslint": "^8.35.1"
     },
     "dependencies": {
-        "react": "^19.2.4",
-        "react-dom": "^19.2.4",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
         "reactflow": "^11.11.4"
     }
 }

@@ -46,6 +46,10 @@ Right-click any task node to quickly change its priority or status color via the
 3. Move the files into that folder.
 4. Reload Obsidian and enable the plugin.
 
+## Privacy
+
+Spatial Task Graph indexes markdown task list items locally so it can render your task graph. It does not send vault contents, file names, or task data to any external service.
+
 ## 🎮 Usage Guide
 
 ### The Interface
