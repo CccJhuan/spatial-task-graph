@@ -25,7 +25,8 @@ export class TaskGraphSettingTab extends PluginSettingTab {
             taskNotesHeading: 'TaskNotes 集成', enableTaskNotes: '启用 TaskNotes', enableTaskNotesDesc: '读取 TaskNotes frontmatter，并与 checklist 任务一起显示。',
             identification: '识别方式', tag: 'Frontmatter 标签', property: '属性和值', taskTag: '任务标签', taskTagDesc: '例如：task 或 tasks。',
             propertyName: '任务属性名', propertyValue: '任务属性值', titleProperty: '标题属性', statusProperty: '状态属性',
-            backlog: '待办状态', inProgress: '进行中状态', finished: '完成状态', statusDesc: '用逗号分隔保存的状态值。'
+            backlog: '待办状态', inProgress: '进行中状态', finished: '完成状态', statusDesc: '用逗号分隔保存的状态值。',
+            clearIndex: '清除任务索引', clearIndexDesc: '清除看板索引、任务引用和插件生成的块引用。不会删除任务内容。', clearIndexConfirm: '再次点击确认清除', clearIndexDone: '已清除（删除 {count} 个块引用）'
         } : {
             advanced: 'Enable advanced features', advancedDesc: 'Turn on to enable experimental task graph features.',
             autoFit: 'Auto-fit after layout', autoFitDesc: 'Whether to zoom out to show all nodes after running smart layout.',
@@ -33,7 +34,8 @@ export class TaskGraphSettingTab extends PluginSettingTab {
             taskNotesHeading: 'TaskNotes integration', enableTaskNotes: 'Enable TaskNotes', enableTaskNotesDesc: 'Read TaskNotes frontmatter alongside checklist tasks.',
             identification: 'Identification method', tag: 'Frontmatter tag', property: 'Property and value', taskTag: 'Task tag', taskTagDesc: 'For example: task or tasks.',
             propertyName: 'Task property name', propertyValue: 'Task property value', titleProperty: 'Title property', statusProperty: 'Status property',
-            backlog: 'Backlog statuses', inProgress: 'In-progress statuses', finished: 'Finished statuses', statusDesc: 'Comma-separated stored status values.'
+            backlog: 'Backlog statuses', inProgress: 'In-progress statuses', finished: 'Finished statuses', statusDesc: 'Comma-separated stored status values.',
+            clearIndex: 'Clear task index', clearIndexDesc: 'Clear board indexes, task references, and plugin-generated block references. Task content will not be deleted.', clearIndexConfirm: 'Click again to confirm', clearIndexDone: 'Cleared ({count} block references removed)'
         };
 
         containerEl.empty();
@@ -107,5 +109,29 @@ export class TaskGraphSettingTab extends PluginSettingTab {
         statusSetting(text.backlog, 'backlogStatuses');
         statusSetting(text.inProgress, 'inProgressStatuses');
         statusSetting(text.finished, 'finishedStatuses');
+        let clearArmed = false;
+        let clearTimer: number | undefined;
+        new Setting(taskNotesOptions).setName(text.clearIndex).setDesc(text.clearIndexDesc)
+            .addButton(button => button.setButtonText(text.clearIndex).setWarning().onClick(() => {
+                void (async () => {
+                    if (!clearArmed) {
+                        clearArmed = true;
+                        button.setButtonText(text.clearIndexConfirm);
+                        if (clearTimer !== undefined) window.clearTimeout(clearTimer);
+                        clearTimer = window.setTimeout(() => {
+                            clearArmed = false;
+                            button.setButtonText(text.clearIndex);
+                        }, 5000);
+                        return;
+                    }
+                    clearArmed = false;
+                    if (clearTimer !== undefined) window.clearTimeout(clearTimer);
+                    const removedCount = await this.plugin.clearTaskIndexAndGeneratedBlockIds();
+                    button.setButtonText(text.clearIndexDone.replace('{count}', String(removedCount)));
+                    window.setTimeout(() => {
+                        button.setButtonText(text.clearIndex);
+                    }, 3000);
+                })();
+            }));
     }
 }

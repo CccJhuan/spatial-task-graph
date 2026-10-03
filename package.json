@@ -1,6 +1,6 @@
 {
     "name": "spatial-task-graph",
-    "version": "1.1.2",
+    "version": "1.1.3",
     "description": "Visualize markdown tasks on an infinite canvas with auto-layout, mind-map style connections, Apple-style UI, and two-way sync.",
     "main": "main.js",
     "type": "module",

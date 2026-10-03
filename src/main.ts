@@ -27,7 +27,7 @@ export interface TaskCacheItem {
 export interface GraphBoard {
 	id: string; name: string;
 	filters: { tags: string[]; excludeTags: string[]; folders: string[]; status: string[]; tagMode?: 'AND' | 'OR'; };
-	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; collapsedNodes?: Record<string, boolean>; taskPaths?: string[]; }
+	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; collapsedNodes?: Record<string, boolean>; taskPaths?: string[]; generatedBlockIds?: string[]; }
 }
 
 interface TaskGraphSettings { 
@@ -419,6 +419,14 @@ export default class TaskGraphPlugin extends Plugin {
 			const randomBlockId = Math.random().toString(36).substring(2, 8);
 			lines[lineNumber] = `${originalLine.trimEnd()} ^${randomBlockId}`;
 			await this.app.vault.modify(file, lines.join('\n'));
+
+            const board = this.settings.boards.find(item => item.id === boardId);
+            if (board) {
+                const generatedBlockIds = new Set(board.data.generatedBlockIds || []);
+                generatedBlockIds.add(randomBlockId);
+                board.data.generatedBlockIds = [...generatedBlockIds];
+                await this.saveSettings();
+            }
 			
 			return `${filePath}::^${randomBlockId}`;
 		} catch(err) { 
@@ -426,6 +434,53 @@ export default class TaskGraphPlugin extends Plugin {
             return taskId; 
         }
 	}
+
+    async clearTaskIndexAndGeneratedBlockIds(): Promise<number> {
+        const generatedIds = new Set<string>();
+        const indexedPaths = new Set<string>();
+        for (const board of this.settings.boards) {
+            for (const id of board.data.generatedBlockIds || []) generatedIds.add(id);
+            for (const taskId of Object.keys(board.data.layout || {})) {
+                const match = taskId.match(/::\^([a-zA-Z0-9-]+)$/);
+                if (match?.[1]) generatedIds.add(match[1]);
+            }
+            for (const edge of board.data.edges || []) {
+                for (const taskId of [edge.source, edge.target]) {
+                    const match = taskId.match(/::\^([a-zA-Z0-9-]+)$/);
+                    if (match?.[1]) generatedIds.add(match[1]);
+                }
+            }
+            for (const path of board.data.taskPaths || []) indexedPaths.add(path);
+            board.data.taskPaths = [];
+            board.data.generatedBlockIds = [];
+            board.data.layout = {};
+            board.data.edges = [];
+            board.data.nodeStatus = {};
+            board.data.collapsedNodes = {};
+        }
+
+        let removedCount = 0;
+        if (generatedIds.size > 0) {
+            const escapedIds = [...generatedIds].map(id => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            const blockPattern = new RegExp(`\\s+\\^(?:${escapedIds.join('|')})(?=\\s*$)`, 'gm');
+            for (const path of indexedPaths) {
+                const file = this.app.vault.getAbstractFileByPath(path);
+                if (!(file instanceof TFile)) continue;
+                const content = await this.app.vault.read(file);
+                const updated = content.replace(blockPattern, () => {
+                    removedCount++;
+                    return '';
+                });
+                if (updated !== content) await this.app.vault.modify(file, updated);
+            }
+        }
+
+        this.taskCache.clear();
+        this.isCacheInitialized = true;
+        await this.saveSettings();
+        this.debouncedRefresh();
+        return removedCount;
+    }
 
 	async updateTaskContent(filePath: string, startLine: number, endLine: number, newText: string) {
 		const file = this.app.vault.getAbstractFileByPath(filePath);
