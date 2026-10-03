@@ -46,7 +46,7 @@ const isTaskNode = (node: AppNode): node is Node<TaskNodeData, 'task'> => node.t
 
 
 const STATUS_COLORS = { 'in_progress': '#34c759', 'pending': '#ff9500', 'finished': '#af52de', 'blocked': '#ff3b30', 'backlog': '#8e8e93', 'default': 'var(--text-muted)' };
-const extractTags = (text: string) => { if (!text) return { tags: [], cleanText: '' }; const tagRegex = /#[\w\u4e00-\u9fa5]+(\/[\w\u4e00-\u9fa5]+)*/g; const tags = text.match(tagRegex) || []; const cleanText = text.replace(tagRegex, '').trim(); return { tags, cleanText }; };
+const extractTags = (text: string) => { if (!text) return { tags: [], cleanText: '' }; const tagRegex = /#[\w\u4e00-\u9fa5-]+(\/[\w\u4e00-\u9fa5-]+)*/g; const tags = text.match(tagRegex) || []; const cleanText = text.replace(tagRegex, '').trim(); return { tags, cleanText }; };
 
 const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isConnectable: boolean }) => {
   const { tags, cleanText } = extractTags(data.label);
@@ -746,15 +746,29 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           }); 
           
           const board = plugin.settings.boards.find(b => b.id === activeBoardId);
-          if (board) { 
-              if (!board.data.edges.some((e: Edge) => e.id === newEdge.id)) {
-                  board.data.edges.push(newEdge);
+          if (board) {
+              const remapId = (id: string) => id === params.source ? newSourceId : id === params.target ? newTargetId : id;
+              const layout = { ...board.data.layout };
+              for (const node of nodes) {
+                  if (node.type !== 'task') continue;
+                  const nextId = remapId(node.id);
+                  const savedPosition = layout[node.id] || node.position;
+                  layout[nextId] = savedPosition;
+                  if (nextId !== node.id) delete layout[node.id];
               }
-              await plugin.saveSettings(); 
+              const edges = board.data.edges.map(edge => {
+                  const source = remapId(edge.source);
+                  const target = remapId(edge.target);
+                  return { ...edge, source, target, id: `e${source}-${target}` };
+              });
+              if (!edges.some(edge => edge.id === newEdge.id)) edges.push(newEdge);
+              board.data.edges = edges;
+              board.data.layout = layout;
+              await plugin.saveSettings();
           }
           setRefreshKey(prev => prev + 1);
       })();
-  }, [plugin, activeBoardId, setEdges, setNodes]);
+  }, [plugin, activeBoardId, nodes, setEdges, setNodes]);
 
   const onNodeDragStop = React.useCallback((event: React.MouseEvent, node: Node) => { 
       const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
