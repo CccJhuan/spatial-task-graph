@@ -32,6 +32,15 @@ export class TaskGraphSettingTab extends PluginSettingTab {
                 this.plugin.settings.autoFitAfterLayout = value;
                 await this.plugin.saveSettings();
             }));
+        new Setting(containerEl)
+        .setName('Sync hierarchy before layout')
+        .setDesc('Add missing parent-child links from checklist indentation before running layout.')
+        .addToggle(toggle => toggle
+            .setValue(this.plugin.settings.autoSyncHierarchy)
+            .onChange(async (value) => {
+                this.plugin.settings.autoSyncHierarchy = value;
+                await this.plugin.saveSettings();
+            }));
 
         // eslint-disable-next-line obsidianmd/ui/sentence-case
         new Setting(containerEl).setName('TaskNotes integration').setHeading();

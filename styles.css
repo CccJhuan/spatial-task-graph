@@ -46,6 +46,10 @@ input[type="checkbox"].filter-checkbox:checked::after { content: ''; position: a
 }
 
 .task-node-wrapper { position: relative; width: 240px; height: auto; min-height: 80px; background: var(--background-secondary); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease; border: 2px solid var(--background-modifier-border); overflow: hidden; display: flex; flex-direction: column; }
+.task-node-wrapper .task-collapse-btn { position: absolute; top: 18px; right: 38px; width: 20px; height: 20px; padding: 0 0 2px; border: 0 !important; border-radius: 50%; background: #dfe3e8 !important; color: #5f6670 !important; box-shadow: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-family: var(--font-interface); font-size: 17px; font-weight: 800; line-height: 1; z-index: 40; opacity: 0; pointer-events: none; transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease, color 0.15s ease; }
+.task-node-wrapper:hover .task-collapse-btn { opacity: 1; pointer-events: all; }
+.task-node-wrapper .task-collapse-btn:hover { transform: scale(1.12); background: var(--interactive-accent) !important; color: #fff !important; box-shadow: none; }
+.task-collapse-btn:focus-visible { opacity: 1; pointer-events: all; outline: 3px solid var(--text-accent); outline-offset: 2px; }
 .task-node-wrapper:hover { transform: translateY(-2px) scale(1.01); box-shadow: 0 12px 24px rgba(0,0,0,0.12); z-index: 10; }
 .text-node-wrapper { min-width: 150px; max-width: 300px; background: var(--background-primary-alt); color: var(--text-normal); border-radius: 8px; padding: 12px; font-family: var(--font-text); box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; position: relative; height: auto; border: 2px dashed var(--text-accent); transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease; }
 .react-flow__node.selected .text-node-wrapper { border-style: solid; border-color: var(--interactive-accent); }

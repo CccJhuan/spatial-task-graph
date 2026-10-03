@@ -2,7 +2,7 @@ import { Plugin, WorkspaceLeaf, TFile, debounce, Notice } from 'obsidian';
 import type { Edge, Viewport } from 'reactflow';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
 import { TaskGraphSettingTab } from './settings';
-import { frontmatterTags, parseTaskNotesFrontmatter, taskNotesStatusForCategory, TaskNotesSettings, TaskNotesStatusCategory } from './tasknotesAdapter';
+import { frontmatterTags, matchesTaskNotesIdentifier, parseTaskNotesFrontmatter, taskNotesStatusForCategory, TaskNotesSettings, TaskNotesStatusCategory } from './tasknotesAdapter';
 
 export interface TextNodeData { id: string; text: string; x: number; y: number; }
 
@@ -19,12 +19,13 @@ export interface TaskCacheItem {
     source: 'checklist' | 'tasknotes';
     rawStatus: string;
     statusCategory: TaskNotesStatusCategory;
+    parentLine?: number;
 }
 
 export interface GraphBoard {
 	id: string; name: string;
 	filters: { tags: string[]; excludeTags: string[]; folders: string[]; status: string[]; tagMode?: 'AND' | 'OR'; };
-	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; }
+	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; collapsedNodes?: Record<string, boolean>; }
 }
 
 interface TaskGraphSettings { 
@@ -32,6 +33,7 @@ interface TaskGraphSettings {
     lastActiveBoardId: string; 
     taskNotes: TaskNotesSettings;
     autoFitAfterLayout: boolean; // 新增：排版后是否自动缩放
+    autoSyncHierarchy: boolean;
 }
 
 interface CachedFilesMetadataCache {
@@ -58,7 +60,8 @@ const DEFAULT_SETTINGS: TaskGraphSettings = {
         inProgressStatuses: 'in-progress,doing',
         finishedStatuses: 'done,completed'
     },
-    autoFitAfterLayout: true // 默认开启
+    autoFitAfterLayout: true,
+    autoSyncHierarchy: false
 };
 
 export default class TaskGraphPlugin extends Plugin {
@@ -132,13 +135,18 @@ export default class TaskGraphPlugin extends Plugin {
 
     async initializeCache() {
         const cachedPaths = (this.app.metadataCache as unknown as CachedFilesMetadataCache).getCachedFiles();
-        for (const path of cachedPaths) {
-            if (!path.endsWith('.md')) continue;
-            const file = this.app.vault.getAbstractFileByPath(path);
-            if (file instanceof TFile) {
-                await this.updateFileCache(file, false);
+        const files = cachedPaths
+            .filter(path => path.endsWith('.md'))
+            .map(path => this.app.vault.getAbstractFileByPath(path))
+            .filter((file): file is TFile => file instanceof TFile);
+        let nextIndex = 0;
+        const worker = async () => {
+            while (nextIndex < files.length) {
+                const file = files[nextIndex++];
+                if (file) await this.updateFileCache(file, false);
             }
-        }
+        };
+        await Promise.all(Array.from({ length: Math.min(8, files.length) }, () => worker()));
         this.isCacheInitialized = true;
         this.debouncedRefresh();
     }
@@ -147,11 +155,18 @@ export default class TaskGraphPlugin extends Plugin {
         if (!(file instanceof TFile) || file.extension !== 'md') return;
         
         const cache = this.app.metadataCache.getFileCache(file);
+        const hasTaskNotesCandidate = Boolean(this.settings.taskNotes.enabled && cache?.frontmatter && matchesTaskNotesIdentifier(cache.frontmatter, this.settings.taskNotes));
+        const hasChecklistCandidate = Boolean(cache?.listItems?.some(item => Boolean(item?.task)));
+        if (!hasTaskNotesCandidate && !hasChecklistCandidate) {
+            this.taskCache.set(file.path, []);
+            if (triggerRefresh && this.isCacheInitialized) this.debouncedRefresh();
+            return;
+        }
         const content = await this.app.vault.cachedRead(file);
         const lines = content.split('\n');
         const tasks: TaskCacheItem[] = [];
 
-        if (this.settings.taskNotes.enabled && cache?.frontmatter) {
+        if (hasTaskNotesCandidate && cache?.frontmatter) {
             const body = content.replace(/^---[\s\S]*?---\s*/, '');
             const taskNote = parseTaskNotesFrontmatter(cache.frontmatter, this.settings.taskNotes, file.basename, body);
             if (taskNote) {
@@ -241,7 +256,8 @@ export default class TaskGraphPlugin extends Plugin {
                 rawText: rawLineText,
                 source: 'checklist',
                 rawStatus: item.task,
-                statusCategory: item.task === 'x' ? 'finished' : item.task === '/' ? 'in_progress' : 'backlog'
+                statusCategory: item.task === 'x' ? 'finished' : item.task === '/' ? 'in_progress' : 'backlog',
+                parentLine: item.parent
             });
         }
 
@@ -439,31 +455,49 @@ export default class TaskGraphPlugin extends Plugin {
 			connectedTaskIds.add(e.target);
 		});
 
-        const allTasks: TaskCacheItem[] = []; 
+        const allTasks: TaskCacheItem[] = [];
 
         for (const [path, fileTasks] of this.taskCache.entries()) {
-            
-            if (filters.folders.length > 0 && !filters.folders.some(folder => path.startsWith(folder))) {
-                continue;
-            }
+            if (filters.folders.length > 0 && !filters.folders.some(folder => path.startsWith(folder))) continue;
 
-            for (const t of fileTasks) {
-                const isConnected = connectedTaskIds.has(t.id);
-                
-                if (!isConnected && filters.status.length > 0 && !filters.status.includes(t.status)) continue;
-                
+            const tasksByLine = new Map(fileTasks.filter(task => task.source === 'checklist').map(task => [task.line, task]));
+            const includedMemo = new Map<string, boolean>();
+            const matchesBaseFilters = (task: TaskCacheItem) => {
+                const isConnected = connectedTaskIds.has(task.id);
+                return (isConnected || filters.status.length === 0 || filters.status.includes(task.status));
+            };
+            const matchesTagFilters = (task: TaskCacheItem) => {
                 if (filters.tags.length > 0) {
                     const tagMode = filters.tagMode || 'OR';
-                    if (tagMode === 'OR') {
-                        if (!filters.tags.some(tag => t.rawText.includes(tag))) continue;
-                    } else {
-                        if (!filters.tags.every(tag => t.rawText.includes(tag))) continue;
-                    }
+                    const matchesTags = tagMode === 'OR'
+                        ? filters.tags.some(tag => task.rawText.includes(tag))
+                        : filters.tags.every(tag => task.rawText.includes(tag));
+                    if (!matchesTags) return false;
                 }
+                return filters.excludeTags.length === 0 || !filters.excludeTags.some(tag => task.rawText.includes(tag));
+            };
+            const isIncluded = (task: TaskCacheItem, visiting = new Set<string>()): boolean => {
+                const cached = includedMemo.get(task.id);
+                if (cached !== undefined) return cached;
+                if (visiting.has(task.id)) return false;
+                const nextVisiting = new Set(visiting).add(task.id);
+                const directlyMatches = matchesBaseFilters(task) && matchesTagFilters(task);
+                if (directlyMatches) {
+                    includedMemo.set(task.id, true);
+                    return true;
+                }
+                const parent = task.source === 'checklist' && task.parentLine !== undefined
+                    ? tasksByLine.get(task.parentLine)
+                    : undefined;
+                // A descendant inherits its parent's scope, so nested checklist
+                // items do not need to repeat the parent's tags.
+                const inherited = Boolean(parent && matchesBaseFilters(task) && isIncluded(parent, nextVisiting));
+                includedMemo.set(task.id, inherited);
+                return inherited;
+            };
 
-                if (filters.excludeTags.length > 0 && filters.excludeTags.some(tag => t.rawText.includes(tag))) continue;
-
-                allTasks.push(t);
+            for (const task of fileTasks) {
+                if (isIncluded(task)) allTasks.push(task);
             }
         }
 
