@@ -2,6 +2,7 @@ import { Plugin, WorkspaceLeaf, TFile, debounce, Notice } from 'obsidian';
 import type { Edge, Viewport } from 'reactflow';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
 import { TaskGraphSettingTab } from './settings';
+import { frontmatterTags, parseTaskNotesFrontmatter, taskNotesStatusForCategory, TaskNotesSettings, TaskNotesStatusCategory } from './tasknotesAdapter';
 
 export interface TextNodeData { id: string; text: string; x: number; y: number; }
 
@@ -15,6 +16,9 @@ export interface TaskCacheItem {
     line: number;
     endLine: number;
     rawText: string;
+    source: 'checklist' | 'tasknotes';
+    rawStatus: string;
+    statusCategory: TaskNotesStatusCategory;
 }
 
 export interface GraphBoard {
@@ -26,6 +30,7 @@ export interface GraphBoard {
 interface TaskGraphSettings { 
     boards: GraphBoard[]; 
     lastActiveBoardId: string; 
+    taskNotes: TaskNotesSettings;
     autoFitAfterLayout: boolean; // 新增：排版后是否自动缩放
 }
 
@@ -41,6 +46,18 @@ const DEFAULT_BOARD: GraphBoard = {
 const DEFAULT_SETTINGS: TaskGraphSettings = { 
     boards: [DEFAULT_BOARD], 
     lastActiveBoardId: 'default',
+    taskNotes: {
+        enabled: false,
+        identificationMethod: 'tag',
+        taskTag: 'task',
+        propertyName: '',
+        propertyValue: '',
+        titleProperty: 'title',
+        statusProperty: 'status',
+        backlogStatuses: 'open,todo,backlog',
+        inProgressStatuses: 'in-progress,doing',
+        finishedStatuses: 'done,completed'
+    },
     autoFitAfterLayout: true // 默认开启
 };
 
@@ -54,6 +71,10 @@ export default class TaskGraphPlugin extends Plugin {
 	debouncedRefresh = debounce(() => {
 		if (this.viewRefresh) this.viewRefresh();
 	}, 500, true);
+
+    refreshTaskNotesCache = debounce(() => {
+        void this.initializeCache();
+    }, 300);
 
 	async onload() {
 		await this.loadSettings();
@@ -126,17 +147,31 @@ export default class TaskGraphPlugin extends Plugin {
         if (!(file instanceof TFile) || file.extension !== 'md') return;
         
         const cache = this.app.metadataCache.getFileCache(file);
-        if (!cache || !cache.listItems) {
-            if (this.taskCache.has(file.path)) {
-                this.taskCache.delete(file.path);
-                if (triggerRefresh && this.isCacheInitialized) this.debouncedRefresh();
-            }
-            return;
-        }
-
         const content = await this.app.vault.cachedRead(file);
         const lines = content.split('\n');
         const tasks: TaskCacheItem[] = [];
+
+        if (this.settings.taskNotes.enabled && cache?.frontmatter) {
+            const body = content.replace(/^---[\s\S]*?---\s*/, '');
+            const taskNote = parseTaskNotesFrontmatter(cache.frontmatter, this.settings.taskNotes, file.basename, body);
+            if (taskNote) {
+                tasks.push({
+                    id: file.path, text: taskNote.title, notes: taskNote.notes,
+                    status: taskNote.category === 'finished' ? 'x' : taskNote.category === 'in_progress' ? '/' : ' ',
+                    file: file.basename, path: file.path, line: -1, endLine: -1,
+                    rawText: `${taskNote.title} ${frontmatterTags(cache.frontmatter.tags).map(tag => `#${tag}`).join(' ')}`,
+                    source: 'tasknotes', rawStatus: taskNote.status,
+                    statusCategory: taskNote.category
+                });
+            }
+        }
+
+        if (!cache?.listItems || tasks.some(task => task.source === 'tasknotes')) {
+            this.taskCache.set(file.path, tasks);
+            if (triggerRefresh && this.isCacheInitialized) this.debouncedRefresh();
+            return;
+        }
+
 
         for (let i = 0; i < cache.listItems.length; i++) {
             const item = cache.listItems[i];
@@ -203,7 +238,10 @@ export default class TaskGraphPlugin extends Plugin {
                 path: file.path,
                 line: startLine,
                 endLine: endLine,
-                rawText: rawLineText
+                rawText: rawLineText,
+                source: 'checklist',
+                rawStatus: item.task,
+                statusCategory: item.task === 'x' ? 'finished' : item.task === '/' ? 'in_progress' : 'backlog'
             });
         }
 
@@ -219,14 +257,42 @@ export default class TaskGraphPlugin extends Plugin {
         // 使用类型断言将 any 显式收敛为我们的目标类型
         const loadedData = (await this.loadData()) as Partial<TaskGraphSettings> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData);
+		this.settings.taskNotes = Object.assign({}, DEFAULT_SETTINGS.taskNotes, loadedData?.taskNotes);
 		if (!this.settings.boards || this.settings.boards.length === 0) {
 			this.settings.boards = [DEFAULT_BOARD];
 		}
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+        await this.saveData(this.settings);
 	}
+
+    async updateTaskNotesStatus(path: string, category: TaskNotesStatusCategory) {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) return;
+        const property = this.settings.taskNotes.statusProperty.trim() || 'status';
+        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+            (frontmatter as Record<string, unknown>)[property] = taskNotesStatusForCategory(category, this.settings.taskNotes);
+        });
+    }
+
+    async updateTaskNotesContent(path: string, text: string) {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) return;
+        const lines = text.split('\n');
+        const title = lines.shift()?.trim() || file.basename;
+        const body = lines.join('\n').trim();
+        const titleProperty = this.settings.taskNotes.titleProperty.trim();
+        if (titleProperty) {
+            await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+                (frontmatter as Record<string, unknown>)[titleProperty] = title;
+            });
+        }
+        const current = await this.app.vault.read(file);
+        const withoutFrontmatter = current.replace(/^---[\s\S]*?---\s*/, '');
+        const frontmatter = current.slice(0, current.length - withoutFrontmatter.length);
+        await this.app.vault.modify(file, `${frontmatter}${body ? `${body}\n` : ''}`);
+    }
 
 	async activateView() {
 		const { workspace } = this.app;

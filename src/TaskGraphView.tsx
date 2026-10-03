@@ -27,7 +27,8 @@ export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 interface TaskNodeData {
     id: string; label: string; notes: string; status: string; file: string; path: string; line: number; endLine: number; customStatus: string;
     onEdit: (data: TaskNodeData) => void;
-    onToggleStatus: (id: string, status: string, path: string, line: number) => Promise<void>;
+    source: 'checklist' | 'tasknotes'; rawStatus: string;
+    onToggleStatus: (id: string, status: string, path: string, line: number, source: 'checklist' | 'tasknotes') => Promise<void>;
     onOpenFile: (path: string) => void;
 }
 
@@ -60,7 +61,7 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isCo
       <div style={{ height: '6px', width: '100%', background: statusColor, opacity: 0.8, flexShrink: 0 }}></div>
       <div style={{ padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
-            <span style={{ fontSize: '10px', fontWeight: '600', color: statusColor, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{data.customStatus === 'default' ? 'TASK' : data.customStatus.replace('_', ' ')}</span>
+            <span style={{ fontSize: '10px', fontWeight: '600', color: statusColor, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{data.rawStatus || (data.customStatus === 'default' ? 'TASK' : data.customStatus.replace('_', ' '))}</span>
             <div className="edit-btn" onClick={(e) => { e.stopPropagation(); data.onEdit(data); }} title="Edit task">✎</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
@@ -69,7 +70,7 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isCo
                 onMouseDown={(e) => e.stopPropagation()} 
                 onClick={(e) => {
                     e.stopPropagation();
-                    void data.onToggleStatus(data.id, data.status, data.path, data.line); 
+                    void data.onToggleStatus(data.id, data.status, data.path, data.line, data.source);
                 }}
                 style={{ display: 'flex', alignItems: 'center', marginTop: '3px', cursor: 'pointer' }}
             >
@@ -498,7 +499,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   const [activeBoardId, setActiveBoardId] = React.useState(plugin.settings.lastActiveBoardId);
   const [refreshKey, setRefreshKey] = React.useState(0);
   
-  const [editTarget, setEditTarget] = React.useState<{id: string, text: string, path: string, line: number, endLine: number} | null>(null);
+  const [editTarget, setEditTarget] = React.useState<{id: string, text: string, path: string, line: number, endLine: number, source: 'checklist' | 'tasknotes'} | null>(null);
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
   
   const [allTags, setAllTags] = React.useState<string[]>([]);
@@ -562,7 +563,8 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
             id: t.id, type: 'task', position: { x: posX, y: posY },
             data: { 
                 id: t.id, label: t.text, notes: t.notes, status: t.status, file: t.file, path: t.path, line: t.line, endLine: t.endLine, 
-                customStatus: finalCustomStatus, 
+                customStatus: t.source === 'tasknotes' ? t.statusCategory : finalCustomStatus,
+                source: t.source, rawStatus: t.rawStatus,
                 onEdit: handleEditTask, onToggleStatus: handleToggleTask,
                 onOpenFile: (path: string) => plugin.app.workspace.openLinkText(path, '', false)
             }
@@ -605,14 +607,17 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           const sourceNodeId = connectionStartRef.current.nodeId;
           const sourceNode = nodes.find(n => n.id === sourceNodeId);
           if (sourceNode && isTaskNode(sourceNode)) {
-              if (sourceNode.data.path) {
+              if (sourceNode.data.path && sourceNode.data.source === 'checklist') {
                   setCreateTarget({ sourceNodeId, sourcePath: sourceNode.data.path }); 
+              } else if (sourceNode.data.source === 'tasknotes') {
+                  // eslint-disable-next-line obsidianmd/ui/sentence-case
+                  new Notice('Create TaskNotes tasks from the TaskNotes plugin.');
               }
           }
       }
   }, [nodes]);
 
-  const handleToggleTask = async (id: string, currentStatus: string, path: string, line: number) => {
+  const handleToggleTask = async (id: string, currentStatus: string, path: string, line: number, source: 'checklist' | 'tasknotes') => {
       const newStatus = (currentStatus === ' ' || currentStatus === '/') ? 'x' : ' ';
       const newCustomStatus = newStatus === 'x' ? 'finished' : 'backlog'; 
       
@@ -629,6 +634,11 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           const nodeStatus = board.data.nodeStatus || {}; 
           nodeStatus[id] = newCustomStatus; 
           await plugin.saveBoardData(activeBoardId, { nodeStatus }); 
+      }
+
+      if (source === 'tasknotes') {
+          await plugin.updateTaskNotesStatus(path, newStatus === 'x' ? 'finished' : 'backlog');
+          return;
       }
       
       const file = plugin.app.vault.getAbstractFileByPath(path);
@@ -682,6 +692,11 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           nodeStatus[nodeId] = status; 
           await plugin.saveBoardData(activeBoardId, { nodeStatus }); 
       } 
+      const node = nodes.find(item => item.id === nodeId);
+      if (node && isTaskNode(node) && node.data.source === 'tasknotes') {
+          const category = status === 'finished' ? 'finished' : status === 'in_progress' ? 'in_progress' : 'backlog';
+          await plugin.updateTaskNotesStatus(node.data.path, category);
+      }
   };
 
   const onMoveEnd = React.useCallback((event: MouseEvent | TouchEvent | null, viewport: Viewport) => {
@@ -760,11 +775,12 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   
   const handleEditTask = (taskData: TaskNodeData) => { 
       const initialText = taskData.label + (taskData.notes ? '\n' + taskData.notes : '');
-      setEditTarget({ id: taskData.id, text: initialText, path: taskData.path, line: taskData.line, endLine: taskData.endLine }); 
+      setEditTarget({ id: taskData.id, text: initialText, path: taskData.path, line: taskData.line, endLine: taskData.endLine, source: taskData.source });
   };
   const saveTaskEdit = async (text: string) => { 
       if (!editTarget) return; 
-      await plugin.updateTaskContent(editTarget.path, editTarget.line, editTarget.endLine, text); 
+      if (editTarget.source === 'tasknotes') await plugin.updateTaskNotesContent(editTarget.path, text);
+      else await plugin.updateTaskContent(editTarget.path, editTarget.line, editTarget.endLine, text);
       setEditTarget(null); 
   };
 
