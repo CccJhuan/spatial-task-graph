@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Menu, Notice, TFile } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Menu, Notice, TFile, debounce } from 'obsidian';
 import * as React from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import ReactFlow, { 
@@ -513,11 +513,9 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   
   const reactFlowInstance = useReactFlow();
   const debouncedSaveBoardData = React.useMemo(
-      () => import('obsidian').then(({ debounce }) => 
-          debounce((boardId: string, data: Partial<GraphBoard['data']>) => {
-              void plugin.saveBoardData(boardId, data);
-          }, 800, true)
-      ),
+      () => Promise.resolve(debounce((boardId: string, data: Partial<GraphBoard['data']>) => {
+          void plugin.saveBoardData(boardId, data);
+      }, 800, true)),
       [plugin]
   );
   const connectionStartRef = React.useRef<Partial<OnConnectStartParams>>({});
