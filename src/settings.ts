@@ -2,6 +2,11 @@ import { PluginSettingTab, Setting } from "obsidian";
 import type { App } from "obsidian"; 
 import SpatialTaskGraphPlugin from "./main"; 
 
+const isSimplifiedChinese = (): boolean => {
+    const obsidianLocale = window.localStorage.getItem('language') || window.navigator.language || '';
+    return /^(zh(?:-cn|-hans)?)(?:$|-)/i.test(obsidianLocale);
+};
+
 export class TaskGraphSettingTab extends PluginSettingTab {
     plugin: SpatialTaskGraphPlugin;
 
@@ -12,20 +17,38 @@ export class TaskGraphSettingTab extends PluginSettingTab {
 
     display(): void {
         const { containerEl } = this;
+        const zh = isSimplifiedChinese();
+        const text = zh ? {
+            advanced: '启用高级功能', advancedDesc: '启用实验性的任务图功能。',
+            autoFit: '布局后自动适应视图', autoFitDesc: '运行智能布局后是否缩放以显示全部节点。',
+            syncHierarchy: '布局前同步层级', syncHierarchyDesc: '布局前根据 checklist 缩进补充父子关系。',
+            taskNotesHeading: 'TaskNotes 集成', enableTaskNotes: '启用 TaskNotes', enableTaskNotesDesc: '读取 TaskNotes frontmatter，并与 checklist 任务一起显示。',
+            identification: '识别方式', tag: 'Frontmatter 标签', property: '属性和值', taskTag: '任务标签', taskTagDesc: '例如：task 或 tasks。',
+            propertyName: '任务属性名', propertyValue: '任务属性值', titleProperty: '标题属性', statusProperty: '状态属性',
+            backlog: '待办状态', inProgress: '进行中状态', finished: '完成状态', statusDesc: '用逗号分隔保存的状态值。'
+        } : {
+            advanced: 'Enable advanced features', advancedDesc: 'Turn on to enable experimental task graph features.',
+            autoFit: 'Auto-fit after layout', autoFitDesc: 'Whether to zoom out to show all nodes after running smart layout.',
+            syncHierarchy: 'Sync hierarchy before layout', syncHierarchyDesc: 'Add missing parent-child links from checklist indentation before running layout.',
+            taskNotesHeading: 'TaskNotes integration', enableTaskNotes: 'Enable TaskNotes', enableTaskNotesDesc: 'Read TaskNotes frontmatter alongside checklist tasks.',
+            identification: 'Identification method', tag: 'Frontmatter tag', property: 'Property and value', taskTag: 'Task tag', taskTagDesc: 'For example: task or tasks.',
+            propertyName: 'Task property name', propertyValue: 'Task property value', titleProperty: 'Title property', statusProperty: 'Status property',
+            backlog: 'Backlog statuses', inProgress: 'In-progress statuses', finished: 'Finished statuses', statusDesc: 'Comma-separated stored status values.'
+        };
 
         containerEl.empty();
 
         new Setting(containerEl)
-            .setName('Enable advanced features')
-            .setDesc('Turn on to enable experimental task graph features.')
+            .setName(text.advanced)
+            .setDesc(text.advancedDesc)
             .addToggle(toggle => toggle
                 .setValue(true)
                 .onChange(async (value) => {
                     await this.plugin.saveSettings();
                 }));
         new Setting(containerEl)
-        .setName('Auto-fit after layout')
-        .setDesc('Whether to zoom out to show all nodes after running smart layout.')
+        .setName(text.autoFit)
+        .setDesc(text.autoFitDesc)
         .addToggle(toggle => toggle
             .setValue(this.plugin.settings.autoFitAfterLayout)
             .onChange(async (value) => {
@@ -33,8 +56,8 @@ export class TaskGraphSettingTab extends PluginSettingTab {
                 await this.plugin.saveSettings();
             }));
         new Setting(containerEl)
-        .setName('Sync hierarchy before layout')
-        .setDesc('Add missing parent-child links from checklist indentation before running layout.')
+        .setName(text.syncHierarchy)
+        .setDesc(text.syncHierarchyDesc)
         .addToggle(toggle => toggle
             .setValue(this.plugin.settings.autoSyncHierarchy)
             .onChange(async (value) => {
@@ -42,11 +65,9 @@ export class TaskGraphSettingTab extends PluginSettingTab {
                 await this.plugin.saveSettings();
             }));
 
-        // eslint-disable-next-line obsidianmd/ui/sentence-case
-        new Setting(containerEl).setName('TaskNotes integration').setHeading();
+        new Setting(containerEl).setName(text.taskNotesHeading).setHeading();
         let taskNotesOptions: HTMLElement | null = null;
-        // eslint-disable-next-line obsidianmd/ui/sentence-case
-        new Setting(containerEl).setName('Enable TaskNotes').setDesc('Read TaskNotes frontmatter alongside checklist tasks.')
+        new Setting(containerEl).setName(text.enableTaskNotes).setDesc(text.enableTaskNotesDesc)
             .addToggle(toggle => toggle.setValue(this.plugin.settings.taskNotes.enabled).onChange(async value => {
                 this.plugin.settings.taskNotes.enabled = value;
                 await this.plugin.saveSettings();
@@ -55,36 +76,36 @@ export class TaskGraphSettingTab extends PluginSettingTab {
             }));
         taskNotesOptions = containerEl.createDiv();
         taskNotesOptions.style.display = this.plugin.settings.taskNotes.enabled ? '' : 'none';
-        new Setting(taskNotesOptions).setName('Identification method').addDropdown(dropdown => dropdown
-            .addOption('tag', 'Frontmatter tag').addOption('property', 'Property and value')
+        new Setting(taskNotesOptions).setName(text.identification).addDropdown(dropdown => dropdown
+            .addOption('tag', text.tag).addOption('property', text.property)
             .setValue(this.plugin.settings.taskNotes.identificationMethod)
             .onChange(async value => {
                 this.plugin.settings.taskNotes.identificationMethod = value as 'tag' | 'property';
                 await this.plugin.saveSettings(); this.plugin.refreshTaskNotesCache();
             }));
-        new Setting(taskNotesOptions).setName('Task tag').setDesc('For example: task or tasks.')
+        new Setting(taskNotesOptions).setName(text.taskTag).setDesc(text.taskTagDesc)
             .addText(text => text.setValue(this.plugin.settings.taskNotes.taskTag).onChange(async value => {
                 this.plugin.settings.taskNotes.taskTag = value; await this.plugin.saveSettings(); this.plugin.refreshTaskNotesCache();
             }));
-        new Setting(taskNotesOptions).setName('Task property name').addText(text => text.setValue(this.plugin.settings.taskNotes.propertyName).onChange(async value => {
+        new Setting(taskNotesOptions).setName(text.propertyName).addText(text => text.setValue(this.plugin.settings.taskNotes.propertyName).onChange(async value => {
             this.plugin.settings.taskNotes.propertyName = value; await this.plugin.saveSettings(); this.plugin.refreshTaskNotesCache();
         }));
-        new Setting(taskNotesOptions).setName('Task property value').addText(text => text.setValue(this.plugin.settings.taskNotes.propertyValue).onChange(async value => {
+        new Setting(taskNotesOptions).setName(text.propertyValue).addText(text => text.setValue(this.plugin.settings.taskNotes.propertyValue).onChange(async value => {
             this.plugin.settings.taskNotes.propertyValue = value; await this.plugin.saveSettings(); this.plugin.refreshTaskNotesCache();
         }));
-        new Setting(taskNotesOptions).setName('Title property').addText(text => text.setValue(this.plugin.settings.taskNotes.titleProperty).onChange(async value => {
+        new Setting(taskNotesOptions).setName(text.titleProperty).addText(text => text.setValue(this.plugin.settings.taskNotes.titleProperty).onChange(async value => {
             this.plugin.settings.taskNotes.titleProperty = value; await this.plugin.saveSettings(); this.plugin.refreshTaskNotesCache();
         }));
-        new Setting(taskNotesOptions).setName('Status property').addText(text => text.setValue(this.plugin.settings.taskNotes.statusProperty).onChange(async value => {
+        new Setting(taskNotesOptions).setName(text.statusProperty).addText(text => text.setValue(this.plugin.settings.taskNotes.statusProperty).onChange(async value => {
             this.plugin.settings.taskNotes.statusProperty = value; await this.plugin.saveSettings(); this.plugin.refreshTaskNotesCache();
         }));
         const statusSetting = (name: string, key: 'backlogStatuses' | 'inProgressStatuses' | 'finishedStatuses') => new Setting(taskNotesOptions)
-            .setName(name).setDesc('Comma-separated stored status values.')
+            .setName(name).setDesc(text.statusDesc)
             .addText(text => text.setValue(this.plugin.settings.taskNotes[key]).onChange(async value => {
                 this.plugin.settings.taskNotes[key] = value; await this.plugin.saveSettings(); this.plugin.refreshTaskNotesCache();
             }));
-        statusSetting('Backlog statuses', 'backlogStatuses');
-        statusSetting('In-progress statuses', 'inProgressStatuses');
-        statusSetting('Finished statuses', 'finishedStatuses');
+        statusSetting(text.backlog, 'backlogStatuses');
+        statusSetting(text.inProgress, 'inProgressStatuses');
+        statusSetting(text.finished, 'finishedStatuses');
     }
 }

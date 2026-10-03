@@ -30,6 +30,7 @@ interface TaskNodeData {
     source: 'checklist' | 'tasknotes'; rawStatus: string;
     onToggleStatus: (id: string, status: string, path: string, line: number, source: 'checklist' | 'tasknotes') => Promise<void>;
     onOpenFile: (path: string) => void;
+    onSaveNotes: (data: TaskNodeData, notes: string) => Promise<void>;
     hasChildren: boolean;
     isCollapsed: boolean;
     compactChildren: CompactTaskRow[];
@@ -63,9 +64,19 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isCo
   const { tags, cleanText } = extractTags(data.label);
   const statusColor = STATUS_COLORS[data.customStatus as keyof typeof STATUS_COLORS] || STATUS_COLORS['default'];
   
-  const hasNotes = data.notes && data.notes.trim().length > 0;
   const [isExpanded, setIsExpanded] = React.useState(false);
+  const [isEditingNotes, setIsEditingNotes] = React.useState(false);
+  const [noteDraft, setNoteDraft] = React.useState(data.notes || '');
   const compactRows = data.isCollapsed ? data.compactChildren : [];
+
+  React.useEffect(() => {
+    if (!isEditingNotes) setNoteDraft(data.notes || '');
+  }, [data.notes, isEditingNotes]);
+
+  const saveNotes = async () => {
+    if (noteDraft !== data.notes) await data.onSaveNotes(data, noteDraft);
+    setIsEditingNotes(false);
+  };
 
   return (
     <div className="task-node-wrapper">
@@ -99,24 +110,33 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isCo
                     {cleanText || data.label}
                 </div>
                 
-                {hasNotes && (
-                    <div 
-                        onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
+                <div
+                        onClick={(e) => { e.stopPropagation(); const nextExpanded = !isExpanded; setIsExpanded(nextExpanded); setIsEditingNotes(nextExpanded); }}
+                        onMouseDown={e => e.stopPropagation()}
                         style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '6px', fontSize: '11px', color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none', borderRadius: '4px', padding: '2px 4px', marginLeft: '-4px' }}
                     >
                         <span style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', display: 'inline-block' }}>▶</span>
                         <span>Notes</span>
                     </div>
-                )}
 
-                {isExpanded && hasNotes && (
-                    <div 
+                {isExpanded && (
+                    <textarea
                         className="nodrag"
+                        value={noteDraft}
+                        placeholder="Write a note..."
+                        onChange={e => { setNoteDraft(e.target.value); setIsEditingNotes(true); }}
+                        onFocus={() => setIsEditingNotes(true)}
+                        onBlur={() => { void saveNotes(); }}
                         onMouseDown={e => e.stopPropagation()}
-                        style={{ marginTop: '6px', fontSize: '11px', lineHeight: '1.4', color: 'var(--text-normal)', background: 'var(--background-primary)', padding: '6px 8px', borderRadius: '4px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', cursor: 'text', borderLeft: `2px solid ${statusColor}80` }}
-                    >
-                        {data.notes}
-                    </div>
+                        onKeyDown={e => {
+                            e.stopPropagation();
+                            if (e.key === 'Escape') { e.preventDefault(); void saveNotes(); }
+                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void saveNotes(); }
+                        }}
+                        autoFocus={isEditingNotes}
+                        rows={Math.max(2, noteDraft.split('\n').length)}
+                        style={{ marginTop: '6px', width: '100%', minHeight: '42px', resize: 'vertical', fontSize: '11px', lineHeight: '1.4', color: 'var(--text-normal)', background: 'var(--background-primary)', padding: '6px 8px', border: '1px solid var(--background-modifier-border)', borderRadius: '4px', outline: 'none', borderLeft: `2px solid ${statusColor}` }}
+                    />
                 )}
             </div>
           </div>
@@ -163,6 +183,7 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
     const [text, setText] = React.useState(initialText);
     const [suggestions, setSuggestions] = React.useState<string[]>([]);
     const [suggestionPos, setSuggestionPos] = React.useState({ top: 0, left: 0 });
+    const [metadataPrompt, setMetadataPrompt] = React.useState<{ symbol: string, label: string, value: string, kind: 'date' | 'recurrence' } | null>(null);
     const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
     const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -171,7 +192,20 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
         if (match) { const query = (match[1] || '').toLowerCase(); const filtered = allTags.filter(t => t.toLowerCase().includes(query)).slice(0, 10); if (filtered.length > 0) { setSuggestions(filtered); setSuggestionPos({ top: 140, left: 30 }); } else { setSuggestions([]); } } else { setSuggestions([]); }
     };
     const insertTag = (tag: string) => { const cursorPos = textareaRef.current?.selectionStart || text.length; const textBeforeCursor = text.slice(0, cursorPos); const textAfterCursor = text.slice(cursorPos); const lastHashIndex = textBeforeCursor.lastIndexOf('#'); const newText = textBeforeCursor.slice(0, lastHashIndex) + tag + ' ' + textAfterCursor; setText(newText); setSuggestions([]); textareaRef.current?.focus(); };
-    const insertMetadata = (symbol: string) => { const newText = text + ` ${symbol} `; setText(newText); textareaRef.current?.focus(); };
+    const appendToFirstLine = (value: string) => {
+        const lines = text.split('\n');
+        const firstLine = (lines.shift() || '').trimEnd();
+        lines.unshift(`${firstLine}${firstLine ? ' ' : ''}${value}`.trim());
+        setText(lines.join('\n'));
+        setMetadataPrompt(null);
+        textareaRef.current?.focus();
+    };
+    const insertMetadata = (symbol: string) => appendToFirstLine(symbol);
+    const openDatePrompt = (symbol: string, label: string) => {
+        const match = text.split('\n')[0]?.match(new RegExp(`${symbol}\\s+(\\d{4}-\\d{2}-\\d{2})`));
+        setMetadataPrompt({ symbol, label, value: match?.[1] || new Date().toISOString().slice(0, 10), kind: 'date' });
+    };
+    const openRecurrencePrompt = () => setMetadataPrompt({ symbol: '🔁', label: 'Recurring schedule', value: 'every week', kind: 'recurrence' });
     
     const handleKeyDown = (e: React.KeyboardEvent) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void onSave(text); } };
 
@@ -184,15 +218,38 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
                     {suggestions.length > 0 && (<div className="suggestion-list" style={{ top: suggestionPos.top, left: suggestionPos.left }}>{suggestions.map(tag => (<div key={tag} className="suggestion-item" onClick={() => insertTag(tag)}>{tag}</div>))}</div>)}
                 </div>
                 <div className="metadata-toolbar">
-                    <div className="metadata-btn" onClick={() => insertMetadata('📅')} title="Due date">📅 <span className="metadata-label">Due</span></div>
-                    <div className="metadata-btn" onClick={() => insertMetadata('🛫')} title="Start date">🛫 <span className="metadata-label">Start</span></div>
-                    <div className="metadata-btn" onClick={() => insertMetadata('⏳')} title="Scheduled">⏳ <span className="metadata-label">Sched</span></div>
-                    <div className="metadata-btn" onClick={() => insertMetadata('🔁')} title="Recurring">🔁 <span className="metadata-label">Recur</span></div>
+                    <div className="metadata-btn" onClick={() => openDatePrompt('📅', 'Due date')} title="Due date">📅 <span className="metadata-label">Due</span></div>
+                    <div className="metadata-btn" onClick={() => openDatePrompt('🛫', 'Start date')} title="Start date">🛫 <span className="metadata-label">Start</span></div>
+                    <div className="metadata-btn" onClick={() => openDatePrompt('⏳', 'Scheduled date')} title="Scheduled date">⏳ <span className="metadata-label">Sched</span></div>
+                    <div className="metadata-btn" onClick={openRecurrencePrompt} title="Recurring">🔁 <span className="metadata-label">Recur</span></div>
                     <div style={{ width: 1, height: 16, background: 'var(--background-modifier-border)', margin: '0 4px' }}></div>
                     <div className="metadata-btn" onClick={() => insertMetadata('🔺')} title="High priority">🔺</div>
                     <div className="metadata-btn" onClick={() => insertMetadata('🔼')} title="Medium priority">🔼</div>
                     <div className="metadata-btn" onClick={() => insertMetadata('🔽')} title="Low priority">🔽</div>
                 </div>
+                {metadataPrompt && (
+                    <div className="metadata-prompt" onKeyDown={e => e.stopPropagation()}>
+                        <div className="metadata-prompt-title">{metadataPrompt.label}</div>
+                        {metadataPrompt.kind === 'date' ? (
+                            <input className="metadata-prompt-input" type="date" value={metadataPrompt.value} onChange={e => { if (e.target.value) appendToFirstLine(`${metadataPrompt.symbol} ${e.target.value}`); }} autoFocus />
+                        ) : (
+                            <>
+                                <select className="metadata-prompt-input" value={metadataPrompt.value} onChange={e => { if (e.target.value) appendToFirstLine(`${metadataPrompt.symbol} ${e.target.value}`); else setMetadataPrompt({ ...metadataPrompt, value: '' }); }}>
+                                    <option value="every day">Every day</option>
+                                    <option value="every week">Every week</option>
+                                    <option value="every month">Every month</option>
+                                    <option value="every year">Every year</option>
+                                    <option value="">Custom</option>
+                                </select>
+                                <input className="metadata-prompt-input" value={metadataPrompt.value} onChange={e => setMetadataPrompt({ ...metadataPrompt, value: e.target.value })} placeholder="e.g. every 2 weeks" />
+                            </>
+                        )}
+                        <div className="metadata-prompt-actions">
+                            <button type="button" onClick={() => setMetadataPrompt(null)}>Cancel</button>
+                            <button type="button" onClick={() => { if (metadataPrompt.value.trim()) appendToFirstLine(`${metadataPrompt.symbol} ${metadataPrompt.value.trim()}`); }}>Insert</button>
+                        </div>
+                    </div>
+                )}
                 <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: 'auto' }}><button onClick={onClose} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--background-modifier-border)', background: 'transparent', color: 'var(--text-normal)' }}>Cancel</button><button onClick={() => { void onSave(text); }} style={{ padding: '6px 16px', borderRadius: '6px', border: 'none', background: 'var(--interactive-accent)', color: 'white', fontWeight: 500 }}>Save</button></div>
             </div>
         </div>
@@ -643,6 +700,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
                 isCollapsed: !!savedCollapsedNodes[t.id],
                 compactChildren: getCompactChildren(t.id),
                 onToggleCollapse: handleToggleCollapse,
+                onSaveNotes: handleSaveTaskNotes,
                 onEdit: handleEditTask, onToggleStatus: handleToggleTask,
                 onOpenFile: (path: string) => plugin.app.workspace.openLinkText(path, '', false)
             }
@@ -864,6 +922,16 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   }, [plugin, activeBoardId, debouncedSaveBoardData]);
   
   const handleSaveTextNode = async (id: string, text: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(board) { const textNodes = board.data.textNodes.map(tn => tn.id === id ? { ...tn, text } : tn); await plugin.saveBoardData(activeBoardId, { textNodes }); } };
+
+  const handleSaveTaskNotes = async (taskData: TaskNodeData, notes: string) => {
+      const content = `${taskData.label}${notes.trim() ? `\n${notes}` : ''}`;
+      if (taskData.source === 'tasknotes') {
+          await plugin.updateTaskNotesContent(taskData.path, content);
+      } else {
+          await plugin.updateTaskContent(taskData.path, taskData.line, taskData.endLine, content);
+      }
+      setRefreshKey(prev => prev + 1);
+  };
   
   const handleEditTask = (taskData: TaskNodeData) => { 
       const initialText = taskData.label + (taskData.notes ? '\n' + taskData.notes : '');
@@ -923,7 +991,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
 
   const handleSwitchBoard = (id: string) => { setActiveBoardId(id); plugin.settings.lastActiveBoardId = id; void plugin.saveSettings(); };
   
-  const handleAddBoard = () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'], tagMode: 'OR' }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
+  const handleAddBoard = () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'], tagMode: 'OR' }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [], taskPaths: [...plugin.taskCache.keys()] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
   
   const handleDeleteBoard = async (id: string) => { 
       const newBoards = plugin.settings.boards.filter(b => b.id !== id); 
@@ -1132,6 +1200,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (board) {
           const mergedLayout = { ...board.data.layout }; const updatedTextNodes = board.data.textNodes.map(tn => ({ ...tn }));
+          const taskPaths = [...new Set([...(board.data.taskPaths || []), ...nodes.filter(isTaskNode).map(node => node.data.path).filter(Boolean)])];
           Object.keys(layout).forEach(nodeId => {
               const node = nodes.find(n => n.id === nodeId); const newPos = layout[nodeId];
               if (newPos !== undefined) {
@@ -1139,7 +1208,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
                   else if (node?.type === 'text') { const tnIndex = updatedTextNodes.findIndex(tn => tn.id === nodeId); if (tnIndex > -1) { const textNodeToUpdate = updatedTextNodes[tnIndex]; if (textNodeToUpdate !== undefined) { textNodeToUpdate.x = newPos.x; textNodeToUpdate.y = newPos.y; } } }
               }
           });
-          await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes });
+          await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes, taskPaths });
       }
 
       new Notice("Smart layout applied.");
