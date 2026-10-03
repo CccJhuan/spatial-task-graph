@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Menu, Notice, TFile } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Menu, Notice, TFile, debounce } from 'obsidian';
 import * as React from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import ReactFlow, { 
@@ -20,15 +20,28 @@ import ReactFlow, {
   OnConnectStartParams 
 } from 'reactflow';
 
-import TaskGraphPlugin, { GraphBoard } from './main';
+import TaskGraphPlugin, { GraphBoard, TaskCacheItem } from './main';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
 interface TaskNodeData {
     id: string; label: string; notes: string; status: string; file: string; path: string; line: number; endLine: number; customStatus: string;
     onEdit: (data: TaskNodeData) => void;
-    onToggleStatus: (id: string, status: string, path: string, line: number) => Promise<void>;
+    source: 'checklist' | 'tasknotes'; rawStatus: string;
+    onToggleStatus: (id: string, status: string, path: string, line: number, source: 'checklist' | 'tasknotes') => Promise<void>;
     onOpenFile: (path: string) => void;
+    onSaveNotes: (data: TaskNodeData, notes: string) => Promise<void>;
+    hasChildren: boolean;
+    isCollapsed: boolean;
+    compactChildren: CompactTaskRow[];
+    onToggleCollapse: (id: string, collapsed: boolean) => Promise<void>;
+}
+
+interface CompactTaskRow {
+    task: TaskCacheItem;
+    depth: number;
+    onToggle: () => Promise<void>;
+    onOpenFile: () => void;
 }
 
 interface TextNodeData {
@@ -45,14 +58,25 @@ const isTaskNode = (node: AppNode): node is Node<TaskNodeData, 'task'> => node.t
 
 
 const STATUS_COLORS = { 'in_progress': '#34c759', 'pending': '#ff9500', 'finished': '#af52de', 'blocked': '#ff3b30', 'backlog': '#8e8e93', 'default': 'var(--text-muted)' };
-const extractTags = (text: string) => { if (!text) return { tags: [], cleanText: '' }; const tagRegex = /#[\w\u4e00-\u9fa5]+(\/[\w\u4e00-\u9fa5]+)*/g; const tags = text.match(tagRegex) || []; const cleanText = text.replace(tagRegex, '').trim(); return { tags, cleanText }; };
+const extractTags = (text: string) => { if (!text) return { tags: [], cleanText: '' }; const tagRegex = /#[\w\u4e00-\u9fa5-]+(\/[\w\u4e00-\u9fa5-]+)*/g; const tags = text.match(tagRegex) || []; const cleanText = text.replace(tagRegex, '').trim(); return { tags, cleanText }; };
 
 const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isConnectable: boolean }) => {
   const { tags, cleanText } = extractTags(data.label);
   const statusColor = STATUS_COLORS[data.customStatus as keyof typeof STATUS_COLORS] || STATUS_COLORS['default'];
   
-  const hasNotes = data.notes && data.notes.trim().length > 0;
   const [isExpanded, setIsExpanded] = React.useState(false);
+  const [isEditingNotes, setIsEditingNotes] = React.useState(false);
+  const [noteDraft, setNoteDraft] = React.useState(data.notes || '');
+  const compactRows = data.isCollapsed ? data.compactChildren : [];
+
+  React.useEffect(() => {
+    if (!isEditingNotes) setNoteDraft(data.notes || '');
+  }, [data.notes, isEditingNotes]);
+
+  const saveNotes = async () => {
+    if (noteDraft !== data.notes) await data.onSaveNotes(data, noteDraft);
+    setIsEditingNotes(false);
+  };
 
   return (
     <div className="task-node-wrapper">
@@ -60,7 +84,7 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isCo
       <div style={{ height: '6px', width: '100%', background: statusColor, opacity: 0.8, flexShrink: 0 }}></div>
       <div style={{ padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
-            <span style={{ fontSize: '10px', fontWeight: '600', color: statusColor, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{data.customStatus === 'default' ? 'TASK' : data.customStatus.replace('_', ' ')}</span>
+            <span style={{ fontSize: '10px', fontWeight: '600', color: statusColor, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{data.rawStatus || (data.customStatus === 'default' ? 'TASK' : data.customStatus.replace('_', ' '))}</span>
             <div className="edit-btn" onClick={(e) => { e.stopPropagation(); data.onEdit(data); }} title="Edit task">✎</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
@@ -69,7 +93,7 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isCo
                 onMouseDown={(e) => e.stopPropagation()} 
                 onClick={(e) => {
                     e.stopPropagation();
-                    void data.onToggleStatus(data.id, data.status, data.path, data.line); 
+                    void data.onToggleStatus(data.id, data.status, data.path, data.line, data.source);
                 }}
                 style={{ display: 'flex', alignItems: 'center', marginTop: '3px', cursor: 'pointer' }}
             >
@@ -86,24 +110,33 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isCo
                     {cleanText || data.label}
                 </div>
                 
-                {hasNotes && (
-                    <div 
-                        onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
+                <div
+                        onClick={(e) => { e.stopPropagation(); const nextExpanded = !isExpanded; setIsExpanded(nextExpanded); setIsEditingNotes(nextExpanded); }}
+                        onMouseDown={e => e.stopPropagation()}
                         style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '6px', fontSize: '11px', color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none', borderRadius: '4px', padding: '2px 4px', marginLeft: '-4px' }}
                     >
                         <span style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', display: 'inline-block' }}>▶</span>
                         <span>Notes</span>
                     </div>
-                )}
 
-                {isExpanded && hasNotes && (
-                    <div 
+                {isExpanded && (
+                    <textarea
                         className="nodrag"
+                        value={noteDraft}
+                        placeholder="Write a note..."
+                        onChange={e => { setNoteDraft(e.target.value); setIsEditingNotes(true); }}
+                        onFocus={() => setIsEditingNotes(true)}
+                        onBlur={() => { void saveNotes(); }}
                         onMouseDown={e => e.stopPropagation()}
-                        style={{ marginTop: '6px', fontSize: '11px', lineHeight: '1.4', color: 'var(--text-normal)', background: 'var(--background-primary)', padding: '6px 8px', borderRadius: '4px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', cursor: 'text', borderLeft: `2px solid ${statusColor}80` }}
-                    >
-                        {data.notes}
-                    </div>
+                        onKeyDown={e => {
+                            e.stopPropagation();
+                            if (e.key === 'Escape') { e.preventDefault(); void saveNotes(); }
+                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void saveNotes(); }
+                        }}
+                        autoFocus={isEditingNotes}
+                        rows={Math.max(2, noteDraft.split('\n').length)}
+                        style={{ marginTop: '6px', width: '100%', minHeight: '42px', resize: 'vertical', fontSize: '11px', lineHeight: '1.4', color: 'var(--text-normal)', background: 'var(--background-primary)', padding: '6px 8px', border: '1px solid var(--background-modifier-border)', borderRadius: '4px', outline: 'none', borderLeft: `2px solid ${statusColor}` }}
+                    />
                 )}
             </div>
           </div>
@@ -111,8 +144,20 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isCo
               <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', flex: 1 }}>{tags.map((tag, i) => (<span key={i} className="node-tag">{tag}</span>))}</div>
               <div className="open-file-btn" onClick={(e) => { e.stopPropagation(); data.onOpenFile(data.path); }} title="Open file">↗ <span>{data.file}</span></div>
           </div>
+          {compactRows.length > 0 && (
+            <div className="nodrag" style={{ marginTop: '10px', borderTop: '1px solid var(--background-modifier-border)', paddingTop: '6px' }}>
+              {compactRows.map(({ task, depth, onToggle, onOpenFile }) => (
+                <div key={task.id} onMouseDown={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '3px 0 3px ' + (depth * 12) + 'px', fontSize: '11px' }}>
+                  <input type="checkbox" checked={task.status === 'x'} readOnly onClick={e => e.stopPropagation()} onChange={() => { void onToggle(); }} />
+                  <span style={{ flex: 1, opacity: task.status === 'x' ? 0.6 : 1, textDecoration: task.status === 'x' ? 'line-through' : 'none', wordBreak: 'break-word' }}>{task.text}</span>
+                  <span onClick={e => { e.stopPropagation(); onOpenFile(); }} style={{ cursor: 'pointer', color: 'var(--text-muted)' }} title="Open file">↗</span>
+                </div>
+              ))}
+            </div>
+          )}
       </div>
       <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="custom-handle custom-handle-right" style={{ right: '-20px', width: '40px', height: '40px', top: '50%', transform: 'translateY(-50%)' }} />
+      {data.hasChildren && <button className="task-collapse-btn nodrag" onClick={(e) => { e.stopPropagation(); void data.onToggleCollapse(data.id, data.isCollapsed); }} onMouseDown={e => e.stopPropagation()} title={data.isCollapsed ? 'Expand child nodes' : 'Collapse child nodes'} aria-label={data.isCollapsed ? 'Expand child nodes' : 'Collapse child nodes'}>{data.isCollapsed ? '+' : '−'}</button>}
     </div>
   );
 });
@@ -138,6 +183,7 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
     const [text, setText] = React.useState(initialText);
     const [suggestions, setSuggestions] = React.useState<string[]>([]);
     const [suggestionPos, setSuggestionPos] = React.useState({ top: 0, left: 0 });
+    const [metadataPrompt, setMetadataPrompt] = React.useState<{ symbol: string, label: string, value: string, kind: 'date' | 'recurrence' } | null>(null);
     const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
     const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -146,7 +192,20 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
         if (match) { const query = (match[1] || '').toLowerCase(); const filtered = allTags.filter(t => t.toLowerCase().includes(query)).slice(0, 10); if (filtered.length > 0) { setSuggestions(filtered); setSuggestionPos({ top: 140, left: 30 }); } else { setSuggestions([]); } } else { setSuggestions([]); }
     };
     const insertTag = (tag: string) => { const cursorPos = textareaRef.current?.selectionStart || text.length; const textBeforeCursor = text.slice(0, cursorPos); const textAfterCursor = text.slice(cursorPos); const lastHashIndex = textBeforeCursor.lastIndexOf('#'); const newText = textBeforeCursor.slice(0, lastHashIndex) + tag + ' ' + textAfterCursor; setText(newText); setSuggestions([]); textareaRef.current?.focus(); };
-    const insertMetadata = (symbol: string) => { const newText = text + ` ${symbol} `; setText(newText); textareaRef.current?.focus(); };
+    const appendToFirstLine = (value: string) => {
+        const lines = text.split('\n');
+        const firstLine = (lines.shift() || '').trimEnd();
+        lines.unshift(`${firstLine}${firstLine ? ' ' : ''}${value}`.trim());
+        setText(lines.join('\n'));
+        setMetadataPrompt(null);
+        textareaRef.current?.focus();
+    };
+    const insertMetadata = (symbol: string) => appendToFirstLine(symbol);
+    const openDatePrompt = (symbol: string, label: string) => {
+        const match = text.split('\n')[0]?.match(new RegExp(`${symbol}\\s+(\\d{4}-\\d{2}-\\d{2})`));
+        setMetadataPrompt({ symbol, label, value: match?.[1] || new Date().toISOString().slice(0, 10), kind: 'date' });
+    };
+    const openRecurrencePrompt = () => setMetadataPrompt({ symbol: '🔁', label: 'Recurring schedule', value: 'every week', kind: 'recurrence' });
     
     const handleKeyDown = (e: React.KeyboardEvent) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void onSave(text); } };
 
@@ -159,15 +218,38 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
                     {suggestions.length > 0 && (<div className="suggestion-list" style={{ top: suggestionPos.top, left: suggestionPos.left }}>{suggestions.map(tag => (<div key={tag} className="suggestion-item" onClick={() => insertTag(tag)}>{tag}</div>))}</div>)}
                 </div>
                 <div className="metadata-toolbar">
-                    <div className="metadata-btn" onClick={() => insertMetadata('📅')} title="Due date">📅 <span className="metadata-label">Due</span></div>
-                    <div className="metadata-btn" onClick={() => insertMetadata('🛫')} title="Start date">🛫 <span className="metadata-label">Start</span></div>
-                    <div className="metadata-btn" onClick={() => insertMetadata('⏳')} title="Scheduled">⏳ <span className="metadata-label">Sched</span></div>
-                    <div className="metadata-btn" onClick={() => insertMetadata('🔁')} title="Recurring">🔁 <span className="metadata-label">Recur</span></div>
+                    <div className="metadata-btn" onClick={() => openDatePrompt('📅', 'Due date')} title="Due date">📅 <span className="metadata-label">Due</span></div>
+                    <div className="metadata-btn" onClick={() => openDatePrompt('🛫', 'Start date')} title="Start date">🛫 <span className="metadata-label">Start</span></div>
+                    <div className="metadata-btn" onClick={() => openDatePrompt('⏳', 'Scheduled date')} title="Scheduled date">⏳ <span className="metadata-label">Sched</span></div>
+                    <div className="metadata-btn" onClick={openRecurrencePrompt} title="Recurring">🔁 <span className="metadata-label">Recur</span></div>
                     <div style={{ width: 1, height: 16, background: 'var(--background-modifier-border)', margin: '0 4px' }}></div>
                     <div className="metadata-btn" onClick={() => insertMetadata('🔺')} title="High priority">🔺</div>
                     <div className="metadata-btn" onClick={() => insertMetadata('🔼')} title="Medium priority">🔼</div>
                     <div className="metadata-btn" onClick={() => insertMetadata('🔽')} title="Low priority">🔽</div>
                 </div>
+                {metadataPrompt && (
+                    <div className="metadata-prompt" onKeyDown={e => e.stopPropagation()}>
+                        <div className="metadata-prompt-title">{metadataPrompt.label}</div>
+                        {metadataPrompt.kind === 'date' ? (
+                            <input className="metadata-prompt-input" type="date" value={metadataPrompt.value} onChange={e => { if (e.target.value) appendToFirstLine(`${metadataPrompt.symbol} ${e.target.value}`); }} autoFocus />
+                        ) : (
+                            <>
+                                <select className="metadata-prompt-input" value={metadataPrompt.value} onChange={e => { if (e.target.value) appendToFirstLine(`${metadataPrompt.symbol} ${e.target.value}`); else setMetadataPrompt({ ...metadataPrompt, value: '' }); }}>
+                                    <option value="every day">Every day</option>
+                                    <option value="every week">Every week</option>
+                                    <option value="every month">Every month</option>
+                                    <option value="every year">Every year</option>
+                                    <option value="">Custom</option>
+                                </select>
+                                <input className="metadata-prompt-input" value={metadataPrompt.value} onChange={e => setMetadataPrompt({ ...metadataPrompt, value: e.target.value })} placeholder="e.g. every 2 weeks" />
+                            </>
+                        )}
+                        <div className="metadata-prompt-actions">
+                            <button type="button" onClick={() => setMetadataPrompt(null)}>Cancel</button>
+                            <button type="button" onClick={() => { if (metadataPrompt.value.trim()) appendToFirstLine(`${metadataPrompt.symbol} ${metadataPrompt.value.trim()}`); }}>Insert</button>
+                        </div>
+                    </div>
+                )}
                 <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: 'auto' }}><button onClick={onClose} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--background-modifier-border)', background: 'transparent', color: 'var(--text-normal)' }}>Cancel</button><button onClick={() => { void onSave(text); }} style={{ padding: '6px 16px', borderRadius: '6px', border: 'none', background: 'var(--interactive-accent)', color: 'white', fontWeight: 500 }}>Save</button></div>
             </div>
         </div>
@@ -234,6 +316,7 @@ interface ControlPanelProps {
     onRenameBoard: (name: string) => Promise<void>;
     onDeleteBoard: (id: string) => Promise<void>;
     onAutoLayout: () => Promise<void>;
+    onSyncRelations: () => Promise<void>;
     onResetView: () => void;
     currentBoard: GraphBoard | undefined;
     onUpdateFilter: (type: string, value: string) => Promise<void>;
@@ -326,7 +409,7 @@ const AutocompleteInput = ({ value, onChange, options, placeholder }: { value: s
     );
 };
 
-const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRenameBoard, onDeleteBoard, onAutoLayout, onResetView, currentBoard, onUpdateFilter, onApplyFilters, onRequestConfirm, allTags, allFolders }: ControlPanelProps) => {
+const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRenameBoard, onDeleteBoard, onAutoLayout, onSyncRelations, onResetView, currentBoard, onUpdateFilter, onApplyFilters, onRequestConfirm, allTags, allFolders }: ControlPanelProps) => {
     const [showFilters, setShowFilters] = React.useState(false);
     const [isRenaming, setIsRenaming] = React.useState(false);
     const [tempName, setTempName] = React.useState('');
@@ -369,7 +452,7 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     const btnStyle = { background: 'var(--background-secondary)', border: '1px solid var(--background-modifier-border)', color: 'var(--text-normal)', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', fontWeight: '500' };
     const activeBtnStyle = { ...btnStyle, background: 'var(--interactive-accent)', color: 'white', border: 'none', boxShadow: '0 2px 8px rgba(var(--interactive-accent-rgb), 0.3)' };
     
-    return (<Panel position="top-right" style={{ position: 'absolute', top: '20px', right: '20px', background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', width: '280px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', pointerEvents: 'all', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...sharedInputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: GraphBoard) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={() => void onAddBoard()} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={() => void onAutoLayout()}>⚡ Layout</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleResetClick}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}>
+    return (<Panel position="top-right" style={{ position: 'absolute', top: '20px', right: '20px', background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', width: '280px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', pointerEvents: 'all', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...sharedInputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: GraphBoard) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={() => void onAddBoard()} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={() => void onAutoLayout()}>⚡ Layout</button><button style={btnStyle} onClick={() => void onSyncRelations()}>🔗 Sync</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleResetClick}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}>
         
         <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginBottom: '8px' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -498,7 +581,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   const [activeBoardId, setActiveBoardId] = React.useState(plugin.settings.lastActiveBoardId);
   const [refreshKey, setRefreshKey] = React.useState(0);
   
-  const [editTarget, setEditTarget] = React.useState<{id: string, text: string, path: string, line: number, endLine: number} | null>(null);
+  const [editTarget, setEditTarget] = React.useState<{id: string, text: string, path: string, line: number, endLine: number, source: 'checklist' | 'tasknotes'} | null>(null);
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
   
   const [allTags, setAllTags] = React.useState<string[]>([]);
@@ -513,17 +596,23 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   
   const reactFlowInstance = useReactFlow();
   const debouncedSaveBoardData = React.useMemo(
-      () => import('obsidian').then(({ debounce }) => 
-          debounce((boardId: string, data: Partial<GraphBoard['data']>) => {
-              void plugin.saveBoardData(boardId, data);
-          }, 800, true)
-      ),
+      () => Promise.resolve(debounce((boardId: string, data: Partial<GraphBoard['data']>) => {
+          void plugin.saveBoardData(boardId, data);
+      }, 800, true)),
       [plugin]
   );
   const connectionStartRef = React.useRef<Partial<OnConnectStartParams>>({});
   const connectionMadeRef = React.useRef(false);
 
   const activeBoard = plugin.settings.boards.find(b => b.id === activeBoardId) || plugin.settings.boards[0];
+
+  const handleToggleCollapse = React.useCallback(async (id: string, collapsed: boolean) => {
+      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
+      if (!board) return;
+      const collapsedNodes = { ...(board.data.collapsedNodes || {}), [id]: !collapsed };
+      await plugin.saveBoardData(activeBoardId, { collapsedNodes });
+      setRefreshKey(prev => prev + 1);
+  }, [plugin, activeBoardId]);
 
   React.useEffect(() => { 
       plugin.viewRefresh = () => setRefreshKey(prev => prev + 1); 
@@ -553,6 +642,47 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       const savedEdges = boardConfig?.data.edges || [];
       const savedNodeStatus = boardConfig?.data.nodeStatus || {};
       const savedTextNodes = boardConfig?.data.textNodes || [];
+      const savedCollapsedNodes = boardConfig?.data.collapsedNodes || {};
+      const taskById = new Map(tasks.map(task => [task.id, task]));
+      const childrenById: Record<string, string[]> = {};
+      const parentsById: Record<string, string[]> = {};
+      for (const edge of savedEdges) {
+          if (taskById.has(edge.source) && taskById.has(edge.target)) {
+              (childrenById[edge.source] ||= []).push(edge.target);
+              (parentsById[edge.target] ||= []).push(edge.source);
+          }
+      }
+      const getCompactChildren = (id: string): CompactTaskRow[] => {
+          const rows: CompactTaskRow[] = [];
+          const visit = (parentId: string, depth: number, path: Set<string>) => {
+              for (const childId of childrenById[parentId] || []) {
+                  if (path.has(childId)) continue;
+                  const task = taskById.get(childId);
+                  if (!task) continue;
+                  rows.push({ task, depth, onToggle: () => handleToggleTask(task.id, task.status, task.path, task.line, task.source), onOpenFile: () => void plugin.app.workspace.openLinkText(task.path, '', false) });
+                  const nextPath = new Set(path); nextPath.add(childId);
+                  visit(childId, depth + 1, nextPath);
+              }
+          };
+          visit(id, 1, new Set([id]));
+          return rows;
+      };
+
+      const collapsedIds = new Set<string>();
+      Object.entries(savedCollapsedNodes).forEach(([id, collapsed]) => { if (collapsed) collapsedIds.add(id); });
+      const hiddenByCollapse = (id: string) => {
+          const seen = new Set<string>();
+          const walk = (parentIds: string[]): boolean => {
+              for (const parentId of parentIds) {
+                  if (collapsedIds.has(parentId)) return true;
+                  if (seen.has(parentId)) continue;
+                  seen.add(parentId);
+                  if (walk(parentsById[parentId] || [])) return true;
+              }
+              return false;
+          };
+          return walk(parentsById[id] || []);
+      };
 
       const taskNodes: Node<TaskNodeData, 'task'>[] = tasks.map((t, index) => {
         const posX = savedLayout[t.id]?.x ?? ((index % 3) * 320);
@@ -561,10 +691,16 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
         if (t.status === 'x') finalCustomStatus = 'finished';
 
         return {
-            id: t.id, type: 'task', position: { x: posX, y: posY },
+            id: t.id, type: 'task', hidden: hiddenByCollapse(t.id), position: { x: posX, y: posY },
             data: { 
                 id: t.id, label: t.text, notes: t.notes, status: t.status, file: t.file, path: t.path, line: t.line, endLine: t.endLine, 
-                customStatus: finalCustomStatus, 
+                customStatus: t.source === 'tasknotes' ? t.statusCategory : finalCustomStatus,
+                source: t.source, rawStatus: t.rawStatus,
+                hasChildren: (childrenById[t.id] || []).length > 0,
+                isCollapsed: !!savedCollapsedNodes[t.id],
+                compactChildren: getCompactChildren(t.id),
+                onToggleCollapse: handleToggleCollapse,
+                onSaveNotes: handleSaveTaskNotes,
                 onEdit: handleEditTask, onToggleStatus: handleToggleTask,
                 onOpenFile: (path: string) => plugin.app.workspace.openLinkText(path, '', false)
             }
@@ -607,14 +743,17 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           const sourceNodeId = connectionStartRef.current.nodeId;
           const sourceNode = nodes.find(n => n.id === sourceNodeId);
           if (sourceNode && isTaskNode(sourceNode)) {
-              if (sourceNode.data.path) {
+              if (sourceNode.data.path && sourceNode.data.source === 'checklist') {
                   setCreateTarget({ sourceNodeId, sourcePath: sourceNode.data.path }); 
+              } else if (sourceNode.data.source === 'tasknotes') {
+                  // eslint-disable-next-line obsidianmd/ui/sentence-case
+                  new Notice('Create TaskNotes tasks from the TaskNotes plugin.');
               }
           }
       }
   }, [nodes]);
 
-  const handleToggleTask = async (id: string, currentStatus: string, path: string, line: number) => {
+  const handleToggleTask = async (id: string, currentStatus: string, path: string, line: number, source: 'checklist' | 'tasknotes') => {
       const newStatus = (currentStatus === ' ' || currentStatus === '/') ? 'x' : ' ';
       const newCustomStatus = newStatus === 'x' ? 'finished' : 'backlog'; 
       
@@ -631,6 +770,11 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           const nodeStatus = board.data.nodeStatus || {}; 
           nodeStatus[id] = newCustomStatus; 
           await plugin.saveBoardData(activeBoardId, { nodeStatus }); 
+      }
+
+      if (source === 'tasknotes') {
+          await plugin.updateTaskNotesStatus(path, newStatus === 'x' ? 'finished' : 'backlog');
+          return;
       }
       
       const file = plugin.app.vault.getAbstractFileByPath(path);
@@ -684,6 +828,11 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           nodeStatus[nodeId] = status; 
           await plugin.saveBoardData(activeBoardId, { nodeStatus }); 
       } 
+      const node = nodes.find(item => item.id === nodeId);
+      if (node && isTaskNode(node) && node.data.source === 'tasknotes') {
+          const category = status === 'finished' ? 'finished' : status === 'in_progress' ? 'in_progress' : 'backlog';
+          await plugin.updateTaskNotesStatus(node.data.path, category);
+      }
   };
 
   const onMoveEnd = React.useCallback((event: MouseEvent | TouchEvent | null, viewport: Viewport) => {
@@ -733,15 +882,29 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           }); 
           
           const board = plugin.settings.boards.find(b => b.id === activeBoardId);
-          if (board) { 
-              if (!board.data.edges.some((e: Edge) => e.id === newEdge.id)) {
-                  board.data.edges.push(newEdge);
+          if (board) {
+              const remapId = (id: string) => id === params.source ? newSourceId : id === params.target ? newTargetId : id;
+              const layout = { ...board.data.layout };
+              for (const node of nodes) {
+                  if (node.type !== 'task') continue;
+                  const nextId = remapId(node.id);
+                  const savedPosition = layout[node.id] || node.position;
+                  layout[nextId] = savedPosition;
+                  if (nextId !== node.id) delete layout[node.id];
               }
-              await plugin.saveSettings(); 
+              const edges = board.data.edges.map(edge => {
+                  const source = remapId(edge.source);
+                  const target = remapId(edge.target);
+                  return { ...edge, source, target, id: `e${source}-${target}` };
+              });
+              if (!edges.some(edge => edge.id === newEdge.id)) edges.push(newEdge);
+              board.data.edges = edges;
+              board.data.layout = layout;
+              await plugin.saveSettings();
           }
           setRefreshKey(prev => prev + 1);
       })();
-  }, [plugin, activeBoardId, setEdges, setNodes]);
+  }, [plugin, activeBoardId, nodes, setEdges, setNodes]);
 
   const onNodeDragStop = React.useCallback((event: React.MouseEvent, node: Node) => { 
       const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
@@ -759,14 +922,25 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   }, [plugin, activeBoardId, debouncedSaveBoardData]);
   
   const handleSaveTextNode = async (id: string, text: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(board) { const textNodes = board.data.textNodes.map(tn => tn.id === id ? { ...tn, text } : tn); await plugin.saveBoardData(activeBoardId, { textNodes }); } };
+
+  const handleSaveTaskNotes = async (taskData: TaskNodeData, notes: string) => {
+      const content = `${taskData.label}${notes.trim() ? `\n${notes}` : ''}`;
+      if (taskData.source === 'tasknotes') {
+          await plugin.updateTaskNotesContent(taskData.path, content);
+      } else {
+          await plugin.updateTaskContent(taskData.path, taskData.line, taskData.endLine, content);
+      }
+      setRefreshKey(prev => prev + 1);
+  };
   
   const handleEditTask = (taskData: TaskNodeData) => { 
       const initialText = taskData.label + (taskData.notes ? '\n' + taskData.notes : '');
-      setEditTarget({ id: taskData.id, text: initialText, path: taskData.path, line: taskData.line, endLine: taskData.endLine }); 
+      setEditTarget({ id: taskData.id, text: initialText, path: taskData.path, line: taskData.line, endLine: taskData.endLine, source: taskData.source });
   };
   const saveTaskEdit = async (text: string) => { 
       if (!editTarget) return; 
-      await plugin.updateTaskContent(editTarget.path, editTarget.line, editTarget.endLine, text); 
+      if (editTarget.source === 'tasknotes') await plugin.updateTaskNotesContent(editTarget.path, text);
+      else await plugin.updateTaskContent(editTarget.path, editTarget.line, editTarget.endLine, text);
       setEditTarget(null); 
   };
 
@@ -817,7 +991,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
 
   const handleSwitchBoard = (id: string) => { setActiveBoardId(id); plugin.settings.lastActiveBoardId = id; void plugin.saveSettings(); };
   
-  const handleAddBoard = () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'], tagMode: 'OR' }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
+  const handleAddBoard = () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'], tagMode: 'OR' }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [], taskPaths: [...plugin.taskCache.keys()] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
   
   const handleDeleteBoard = async (id: string) => { 
       const newBoards = plugin.settings.boards.filter(b => b.id !== id); 
@@ -843,13 +1017,39 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       setRefreshKey(prev => prev + 1);
   };
 
+  const handleSyncRelations = async (notify = true) => {
+      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
+      if (!board) return;
+      const tasks = plugin.getTasks(activeBoardId).filter(task => task.source === 'checklist');
+      const byLine = new Map(tasks.map(task => [`${task.path}::${task.line}`, task]));
+      const nextEdges = [...(board.data.edges || edges)];
+      let added = 0;
+      for (const child of tasks) {
+          if (child.parentLine === undefined || child.parentLine < 0) continue;
+          const parent = byLine.get(`${child.path}::${child.parentLine}`);
+          if (!parent || nextEdges.some(edge => edge.source === parent.id && edge.target === child.id)) continue;
+          nextEdges.push({ id: `e${parent.id}-${child.id}`, source: parent.id, target: child.id, animated: true });
+          added++;
+      }
+      if (added === 0) {
+          if (notify) new Notice('No new hierarchical relations found.');
+          return;
+      }
+      setEdges(nextEdges);
+      await plugin.saveBoardData(activeBoardId, { edges: nextEdges });
+      setRefreshKey(prev => prev + 1);
+      if (notify) new Notice(`Synced ${added} relation(s) from document indentation.`);
+  };
+
   const handleAutoLayout = async () => {
+      if (plugin.settings.autoSyncHierarchy) await handleSyncRelations(false);
+      const effectiveEdges = plugin.settings.boards.find(b => b.id === activeBoardId)?.data.edges || edges;
       const undirectedAdj: Record<string, string[]> = {};
       const directedAdj: Record<string, string[]> = {};
       const inDegree: Record<string, number> = {};
 
       nodes.forEach(n => { undirectedAdj[n.id] = []; directedAdj[n.id] = []; inDegree[n.id] = 0; });
-      edges.forEach((e: Edge) => {
+      effectiveEdges.forEach((e: Edge) => {
           const sourceDir = directedAdj[e.source]; const sourceUndir = undirectedAdj[e.source]; const targetUndir = undirectedAdj[e.target];
           if (sourceDir) sourceDir.push(e.target);
           inDegree[e.target] = (inDegree[e.target] ?? 0) + 1;
@@ -903,7 +1103,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           let changed = true; let iter = 0;
           while (changed && iter < 200) {
               changed = false; iter++;
-              edges.forEach((e: Edge) => { if (level[e.source] !== undefined && level[e.target] !== undefined) { if (level[e.target]! <= level[e.source]!) { level[e.target] = level[e.source]! + 1; changed = true; } } });
+              effectiveEdges.forEach((e: Edge) => { if (level[e.source] !== undefined && level[e.target] !== undefined) { if (level[e.target]! <= level[e.source]!) { level[e.target] = level[e.source]! + 1; changed = true; } } });
           }
 
           const levelGroups: Record<number, string[]> = {};
@@ -952,7 +1152,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
 
           const compInDegree: Record<string, number> = {};
           comp.forEach(id => { compInDegree[id] = 0; });
-          edges.forEach((e: Edge) => { if (compInDegree[e.target] !== undefined && comp.includes(e.source)) compInDegree[e.target] = (compInDegree[e.target] ?? 0) + 1; });
+          effectiveEdges.forEach((e: Edge) => { if (compInDegree[e.target] !== undefined && comp.includes(e.source)) compInDegree[e.target] = (compInDegree[e.target] ?? 0) + 1; });
           const roots = comp.filter(id => (compInDegree[id] ?? 0) === 0);
           const sortedRoots = getUserOrderRank(roots);
 
@@ -1000,6 +1200,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (board) {
           const mergedLayout = { ...board.data.layout }; const updatedTextNodes = board.data.textNodes.map(tn => ({ ...tn }));
+          const taskPaths = [...new Set([...(board.data.taskPaths || []), ...nodes.filter(isTaskNode).map(node => node.data.path).filter(Boolean)])];
           Object.keys(layout).forEach(nodeId => {
               const node = nodes.find(n => n.id === nodeId); const newPos = layout[nodeId];
               if (newPos !== undefined) {
@@ -1007,7 +1208,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
                   else if (node?.type === 'text') { const tnIndex = updatedTextNodes.findIndex(tn => tn.id === nodeId); if (tnIndex > -1) { const textNodeToUpdate = updatedTextNodes[tnIndex]; if (textNodeToUpdate !== undefined) { textNodeToUpdate.x = newPos.x; textNodeToUpdate.y = newPos.y; } } }
               }
           });
-          await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes });
+          await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes, taskPaths });
       }
 
       new Notice("Smart layout applied.");
@@ -1083,7 +1284,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       >
         <Background gap={24} color="rgba(150,150,150,0.1)" size={1.5} />
         
-        <ControlPanel boards={plugin.settings.boards} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onDeleteBoard={handleDeleteBoard} onAutoLayout={handleAutoLayout} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} onApplyFilters={handleApplyFilters} onRequestConfirm={(msg: string, action: () => void) => setConfirmReq({ message: msg, action })} allTags={allTags} allFolders={allFolders} />
+        <ControlPanel boards={plugin.settings.boards} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onDeleteBoard={handleDeleteBoard} onAutoLayout={handleAutoLayout} onSyncRelations={handleSyncRelations} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} onApplyFilters={handleApplyFilters} onRequestConfirm={(msg: string, action: () => void) => setConfirmReq({ message: msg, action })} allTags={allTags} allFolders={allFolders} />
         <GraphToolbar />
         
         <Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '70px', zIndex: 99, pointerEvents: 'none' }}>

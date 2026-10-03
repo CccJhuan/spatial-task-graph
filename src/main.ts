@@ -2,6 +2,7 @@ import { Plugin, WorkspaceLeaf, TFile, debounce, Notice } from 'obsidian';
 import type { Edge, Viewport } from 'reactflow';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
 import { TaskGraphSettingTab } from './settings';
+import { frontmatterTags, matchesTaskNotesIdentifier, parseTaskNotesFrontmatter, taskNotesStatusForCategory, TaskNotesSettings, TaskNotesStatusCategory } from './tasknotesAdapter';
 
 export interface TextNodeData { id: string; text: string; x: number; y: number; }
 
@@ -15,18 +16,26 @@ export interface TaskCacheItem {
     line: number;
     endLine: number;
     rawText: string;
+    source: 'checklist' | 'tasknotes';
+    rawStatus: string;
+    statusCategory: TaskNotesStatusCategory;
+    parentLine?: number;
+    notesStartLine?: number;
+    notesEndLine?: number;
 }
 
 export interface GraphBoard {
 	id: string; name: string;
 	filters: { tags: string[]; excludeTags: string[]; folders: string[]; status: string[]; tagMode?: 'AND' | 'OR'; };
-	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; }
+	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; collapsedNodes?: Record<string, boolean>; taskPaths?: string[]; generatedBlockIds?: string[]; }
 }
 
 interface TaskGraphSettings { 
     boards: GraphBoard[]; 
     lastActiveBoardId: string; 
+    taskNotes: TaskNotesSettings;
     autoFitAfterLayout: boolean; // 新增：排版后是否自动缩放
+    autoSyncHierarchy: boolean;
 }
 
 interface CachedFilesMetadataCache {
@@ -41,7 +50,20 @@ const DEFAULT_BOARD: GraphBoard = {
 const DEFAULT_SETTINGS: TaskGraphSettings = { 
     boards: [DEFAULT_BOARD], 
     lastActiveBoardId: 'default',
-    autoFitAfterLayout: true // 默认开启
+    taskNotes: {
+        enabled: false,
+        identificationMethod: 'tag',
+        taskTag: 'task',
+        propertyName: '',
+        propertyValue: '',
+        titleProperty: 'title',
+        statusProperty: 'status',
+        backlogStatuses: 'open,todo,backlog',
+        inProgressStatuses: 'in-progress,doing',
+        finishedStatuses: 'done,completed'
+    },
+    autoFitAfterLayout: true,
+    autoSyncHierarchy: false
 };
 
 export default class TaskGraphPlugin extends Plugin {
@@ -54,6 +76,13 @@ export default class TaskGraphPlugin extends Plugin {
 	debouncedRefresh = debounce(() => {
 		if (this.viewRefresh) this.viewRefresh();
 	}, 500, true);
+
+    refreshTaskNotesCache = debounce(() => {
+        void this.initializeCache(true);
+    }, 300);
+    persistTaskPathIndexes = debounce(() => {
+        void this.saveSettings();
+    }, 1000);
 
 	async onload() {
 		await this.loadSettings();
@@ -85,6 +114,11 @@ export default class TaskGraphPlugin extends Plugin {
                 }
             } 
         });
+        this.addCommand({
+            id: 'rebuild-task-index',
+            name: 'Rebuild task document index',
+            callback: () => { void this.initializeCache(true); }
+        });
 
 		this.registerEvent(this.app.metadataCache.on('changed', (file) => {
             void this.updateFileCache(file);
@@ -94,12 +128,22 @@ export default class TaskGraphPlugin extends Plugin {
                 const tasks = this.taskCache.get(oldPath);
                 this.taskCache.delete(oldPath);
                 if (tasks) this.taskCache.set(file.path, tasks);
+                for (const board of this.settings.boards) {
+                    if (board.data.taskPaths?.includes(oldPath)) {
+                        board.data.taskPaths = board.data.taskPaths.map(path => path === oldPath ? file.path : path);
+                    }
+                }
+                this.persistTaskPathIndexes();
                 this.debouncedRefresh();
             }
         }));
         this.registerEvent(this.app.vault.on('delete', (file) => {
             if (this.taskCache.has(file.path)) {
                 this.taskCache.delete(file.path);
+                for (const board of this.settings.boards) {
+                    if (board.data.taskPaths) board.data.taskPaths = board.data.taskPaths.filter(path => path !== file.path);
+                }
+                this.persistTaskPathIndexes();
                 this.debouncedRefresh();
             }
         }));
@@ -109,14 +153,29 @@ export default class TaskGraphPlugin extends Plugin {
         });
 	}
 
-    async initializeCache() {
+    async initializeCache(forceFullScan = false) {
         const cachedPaths = (this.app.metadataCache as unknown as CachedFilesMetadataCache).getCachedFiles();
-        for (const path of cachedPaths) {
-            if (!path.endsWith('.md')) continue;
-            const file = this.app.vault.getAbstractFileByPath(path);
-            if (file instanceof TFile) {
-                await this.updateFileCache(file, false);
+        const indexedPaths = this.settings.boards.flatMap(board => board.data.taskPaths || []);
+        const shouldUseIndex = !forceFullScan && this.settings.boards.every(board => Array.isArray(board.data.taskPaths));
+        const paths = shouldUseIndex ? [...new Set(indexedPaths)] : cachedPaths;
+        const files = paths
+            .filter(path => path.endsWith('.md'))
+            .map(path => this.app.vault.getAbstractFileByPath(path))
+            .filter((file): file is TFile => file instanceof TFile);
+        let nextIndex = 0;
+        const worker = async () => {
+            while (nextIndex < files.length) {
+                const file = files[nextIndex++];
+                if (file) await this.updateFileCache(file, false);
             }
+        };
+        await Promise.all(Array.from({ length: Math.min(8, files.length) }, () => worker()));
+        if (!shouldUseIndex) {
+            const taskPaths = [...this.taskCache.entries()]
+                .filter(([, tasks]) => tasks.length > 0)
+                .map(([path]) => path);
+            for (const board of this.settings.boards) board.data.taskPaths = [...taskPaths];
+            await this.saveSettings();
         }
         this.isCacheInitialized = true;
         this.debouncedRefresh();
@@ -126,17 +185,40 @@ export default class TaskGraphPlugin extends Plugin {
         if (!(file instanceof TFile) || file.extension !== 'md') return;
         
         const cache = this.app.metadataCache.getFileCache(file);
-        if (!cache || !cache.listItems) {
-            if (this.taskCache.has(file.path)) {
-                this.taskCache.delete(file.path);
-                if (triggerRefresh && this.isCacheInitialized) this.debouncedRefresh();
-            }
+        const hasTaskNotesCandidate = Boolean(this.settings.taskNotes.enabled && cache?.frontmatter && matchesTaskNotesIdentifier(cache.frontmatter, this.settings.taskNotes));
+        const hasChecklistCandidate = Boolean(cache?.listItems?.some(item => Boolean(item?.task)));
+        if (!hasTaskNotesCandidate && !hasChecklistCandidate) {
+            this.taskCache.set(file.path, []);
+            this.trackTaskPath(file.path, false);
+            if (triggerRefresh && this.isCacheInitialized) this.debouncedRefresh();
             return;
         }
-
         const content = await this.app.vault.cachedRead(file);
         const lines = content.split('\n');
         const tasks: TaskCacheItem[] = [];
+
+        if (hasTaskNotesCandidate && cache?.frontmatter) {
+            const body = content.replace(/^---[\s\S]*?---\s*/, '');
+            const taskNote = parseTaskNotesFrontmatter(cache.frontmatter, this.settings.taskNotes, file.basename, body);
+            if (taskNote) {
+                tasks.push({
+                    id: file.path, text: taskNote.title, notes: taskNote.notes,
+                    status: taskNote.category === 'finished' ? 'x' : taskNote.category === 'in_progress' ? '/' : ' ',
+                    file: file.basename, path: file.path, line: -1, endLine: -1,
+                    rawText: `${taskNote.title} ${frontmatterTags(cache.frontmatter.tags).map(tag => `#${tag}`).join(' ')}`,
+                    source: 'tasknotes', rawStatus: taskNote.status,
+                    statusCategory: taskNote.category
+                });
+            }
+        }
+
+        if (!cache?.listItems || tasks.some(task => task.source === 'tasknotes')) {
+            this.taskCache.set(file.path, tasks);
+            this.trackTaskPath(file.path, tasks.length > 0);
+            if (triggerRefresh && this.isCacheInitialized) this.debouncedRefresh();
+            return;
+        }
+
 
         for (let i = 0; i < cache.listItems.length; i++) {
             const item = cache.listItems[i];
@@ -158,9 +240,20 @@ export default class TaskGraphPlugin extends Plugin {
             const rawLineText = lines[startLine];
             if (rawLineText === undefined) continue;
 
+            const baseIndent = (rawLineText.match(/^\s*/) || [''])[0].length;
+            const childLine = cache.listItems.slice(i + 1).find(nextItem => {
+                if (!nextItem?.task) return false;
+                const nextLine = nextItem.position.start.line;
+                if (nextLine > endLine) return false;
+                const nextText = lines[nextLine] || '';
+                return (nextText.match(/^\s*/) || [''])[0].length > baseIndent;
+            })?.position.start.line;
+            const notesStartLine = startLine + 1;
+            const notesEndLine = childLine !== undefined ? childLine - 1 : endLine;
+
             let notesText = "";
-            if (endLine > startLine) {
-                const notesLines = lines.slice(startLine + 1, endLine + 1);
+            if (notesEndLine >= notesStartLine) {
+                const notesLines = lines.slice(notesStartLine, notesEndLine + 1);
                 let minIndent = Infinity;
                 for (const nl of notesLines) {
                     if (nl.trim().length === 0) continue;
@@ -203,14 +296,38 @@ export default class TaskGraphPlugin extends Plugin {
                 path: file.path,
                 line: startLine,
                 endLine: endLine,
-                rawText: rawLineText
+                rawText: rawLineText,
+                source: 'checklist',
+                rawStatus: item.task,
+                statusCategory: item.task === 'x' ? 'finished' : item.task === '/' ? 'in_progress' : 'backlog',
+                parentLine: item.parent,
+                notesStartLine,
+                notesEndLine
             });
         }
 
         this.taskCache.set(file.path, tasks);
+        this.trackTaskPath(file.path, tasks.length > 0);
         if (triggerRefresh && this.isCacheInitialized) {
             this.debouncedRefresh();
         }
+    }
+
+    private trackTaskPath(path: string, hasTasks: boolean) {
+        let changed = false;
+        for (const board of this.settings.boards) {
+            if (!board.data.taskPaths) continue;
+            const paths = board.data.taskPaths;
+            const index = paths.indexOf(path);
+            if (hasTasks && index === -1) {
+                paths.push(path);
+                changed = true;
+            } else if (!hasTasks && index !== -1) {
+                paths.splice(index, 1);
+                changed = true;
+            }
+        }
+        if (changed) this.persistTaskPathIndexes();
     }
 
 	onunload() { }
@@ -219,14 +336,42 @@ export default class TaskGraphPlugin extends Plugin {
         // 使用类型断言将 any 显式收敛为我们的目标类型
         const loadedData = (await this.loadData()) as Partial<TaskGraphSettings> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData);
+		this.settings.taskNotes = Object.assign({}, DEFAULT_SETTINGS.taskNotes, loadedData?.taskNotes);
 		if (!this.settings.boards || this.settings.boards.length === 0) {
 			this.settings.boards = [DEFAULT_BOARD];
 		}
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+        await this.saveData(this.settings);
 	}
+
+    async updateTaskNotesStatus(path: string, category: TaskNotesStatusCategory) {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) return;
+        const property = this.settings.taskNotes.statusProperty.trim() || 'status';
+        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+            (frontmatter as Record<string, unknown>)[property] = taskNotesStatusForCategory(category, this.settings.taskNotes);
+        });
+    }
+
+    async updateTaskNotesContent(path: string, text: string) {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) return;
+        const lines = text.split('\n');
+        const title = lines.shift()?.trim() || file.basename;
+        const body = lines.join('\n').trim();
+        const titleProperty = this.settings.taskNotes.titleProperty.trim();
+        if (titleProperty) {
+            await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+                (frontmatter as Record<string, unknown>)[titleProperty] = title;
+            });
+        }
+        const current = await this.app.vault.read(file);
+        const withoutFrontmatter = current.replace(/^---[\s\S]*?---\s*/, '');
+        const frontmatter = current.slice(0, current.length - withoutFrontmatter.length);
+        await this.app.vault.modify(file, `${frontmatter}${body ? `${body}\n` : ''}`);
+    }
 
 	async activateView() {
 		const { workspace } = this.app;
@@ -274,6 +419,14 @@ export default class TaskGraphPlugin extends Plugin {
 			const randomBlockId = Math.random().toString(36).substring(2, 8);
 			lines[lineNumber] = `${originalLine.trimEnd()} ^${randomBlockId}`;
 			await this.app.vault.modify(file, lines.join('\n'));
+
+            const board = this.settings.boards.find(item => item.id === boardId);
+            if (board) {
+                const generatedBlockIds = new Set(board.data.generatedBlockIds || []);
+                generatedBlockIds.add(randomBlockId);
+                board.data.generatedBlockIds = [...generatedBlockIds];
+                await this.saveSettings();
+            }
 			
 			return `${filePath}::^${randomBlockId}`;
 		} catch(err) { 
@@ -281,6 +434,53 @@ export default class TaskGraphPlugin extends Plugin {
             return taskId; 
         }
 	}
+
+    async clearTaskIndexAndGeneratedBlockIds(): Promise<number> {
+        const generatedIds = new Set<string>();
+        const indexedPaths = new Set<string>();
+        for (const board of this.settings.boards) {
+            for (const id of board.data.generatedBlockIds || []) generatedIds.add(id);
+            for (const taskId of Object.keys(board.data.layout || {})) {
+                const match = taskId.match(/::\^([a-zA-Z0-9-]+)$/);
+                if (match?.[1]) generatedIds.add(match[1]);
+            }
+            for (const edge of board.data.edges || []) {
+                for (const taskId of [edge.source, edge.target]) {
+                    const match = taskId.match(/::\^([a-zA-Z0-9-]+)$/);
+                    if (match?.[1]) generatedIds.add(match[1]);
+                }
+            }
+            for (const path of board.data.taskPaths || []) indexedPaths.add(path);
+            board.data.taskPaths = [];
+            board.data.generatedBlockIds = [];
+            board.data.layout = {};
+            board.data.edges = [];
+            board.data.nodeStatus = {};
+            board.data.collapsedNodes = {};
+        }
+
+        let removedCount = 0;
+        if (generatedIds.size > 0) {
+            const escapedIds = [...generatedIds].map(id => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            const blockPattern = new RegExp(`\\s+\\^(?:${escapedIds.join('|')})(?=\\s*$)`, 'gm');
+            for (const path of indexedPaths) {
+                const file = this.app.vault.getAbstractFileByPath(path);
+                if (!(file instanceof TFile)) continue;
+                const content = await this.app.vault.read(file);
+                const updated = content.replace(blockPattern, () => {
+                    removedCount++;
+                    return '';
+                });
+                if (updated !== content) await this.app.vault.modify(file, updated);
+            }
+        }
+
+        this.taskCache.clear();
+        this.isCacheInitialized = true;
+        await this.saveSettings();
+        this.debouncedRefresh();
+        return removedCount;
+    }
 
 	async updateTaskContent(filePath: string, startLine: number, endLine: number, newText: string) {
 		const file = this.app.vault.getAbstractFileByPath(filePath);
@@ -299,6 +499,28 @@ export default class TaskGraphPlugin extends Plugin {
             const prefix = originalMatch && originalMatch[1] ? originalMatch[1] : '- [ ] ';
             const existingBlockId = originalMatch && originalMatch[3] ? originalMatch[3] : '';
 
+            const taskIndent = (originalLine.match(/^\s*/) || [''])[0];
+            const taskIndentLength = taskIndent.length;
+            const isTaskLine = (line: string) => /^\s*- \[[x\s/bc!-]\]\s/.test(line);
+            let firstChildLine: number | undefined;
+            let noteEndLine = startLine;
+            for (let i = startLine + 1; i < lines.length; i++) {
+                const line = lines[i] || '';
+                if (!isTaskLine(line)) {
+                    noteEndLine = i;
+                    continue;
+                }
+                const indentLength = (line.match(/^\s*/) || [''])[0].length;
+                if (indentLength > taskIndentLength) {
+                    firstChildLine = i;
+                    break;
+                }
+                noteEndLine = i - 1;
+                break;
+            }
+            if (firstChildLine !== undefined) noteEndLine = firstChildLine - 1;
+            if (noteEndLine < startLine) noteEndLine = startLine;
+
             const newTextLines = newText.split('\n');
             const firstLine = newTextLines[0] || '';
             const cleanNewTitle = firstLine.replace(/(?:\s+\^[a-zA-Z0-9-]+)+$/, '').trim();
@@ -314,7 +536,9 @@ export default class TaskGraphPlugin extends Plugin {
             const formattedNotes = newNotes.map(n => n.trim() === '' ? '' : `${noteIndent}${n.trim()}`);
             const replacement = [newFirstLine, ...formattedNotes];
 
-            lines.splice(startLine, endLine - startLine + 1, ...replacement);
+            // Replace only the task line and its direct note block. Child tasks
+            // and their indentation remain untouched after the insertion point.
+            lines.splice(startLine, noteEndLine - startLine + 1, ...replacement);
 
 			await this.app.vault.modify(file, lines.join('\n'));
 		} catch (err) { 
@@ -373,31 +597,53 @@ export default class TaskGraphPlugin extends Plugin {
 			connectedTaskIds.add(e.target);
 		});
 
-        const allTasks: TaskCacheItem[] = []; 
+        const allTasks: TaskCacheItem[] = [];
 
-        for (const [path, fileTasks] of this.taskCache.entries()) {
-            
-            if (filters.folders.length > 0 && !filters.folders.some(folder => path.startsWith(folder))) {
-                continue;
-            }
+        const indexedPaths = board.data.taskPaths;
+        const taskEntries = indexedPaths
+            ? indexedPaths.map(path => [path, this.taskCache.get(path) || []] as const)
+            : Array.from(this.taskCache.entries());
+        for (const [path, fileTasks] of taskEntries) {
+            if (filters.folders.length > 0 && !filters.folders.some(folder => path.startsWith(folder))) continue;
 
-            for (const t of fileTasks) {
-                const isConnected = connectedTaskIds.has(t.id);
-                
-                if (!isConnected && filters.status.length > 0 && !filters.status.includes(t.status)) continue;
-                
+            const tasksByLine = new Map(fileTasks.filter(task => task.source === 'checklist').map(task => [task.line, task]));
+            const includedMemo = new Map<string, boolean>();
+            const matchesBaseFilters = (task: TaskCacheItem) => {
+                const isConnected = connectedTaskIds.has(task.id);
+                return (isConnected || filters.status.length === 0 || filters.status.includes(task.status));
+            };
+            const matchesTagFilters = (task: TaskCacheItem) => {
                 if (filters.tags.length > 0) {
                     const tagMode = filters.tagMode || 'OR';
-                    if (tagMode === 'OR') {
-                        if (!filters.tags.some(tag => t.rawText.includes(tag))) continue;
-                    } else {
-                        if (!filters.tags.every(tag => t.rawText.includes(tag))) continue;
-                    }
+                    const matchesTags = tagMode === 'OR'
+                        ? filters.tags.some(tag => task.rawText.includes(tag))
+                        : filters.tags.every(tag => task.rawText.includes(tag));
+                    if (!matchesTags) return false;
                 }
+                return filters.excludeTags.length === 0 || !filters.excludeTags.some(tag => task.rawText.includes(tag));
+            };
+            const isIncluded = (task: TaskCacheItem, visiting = new Set<string>()): boolean => {
+                const cached = includedMemo.get(task.id);
+                if (cached !== undefined) return cached;
+                if (visiting.has(task.id)) return false;
+                const nextVisiting = new Set(visiting).add(task.id);
+                const directlyMatches = matchesBaseFilters(task) && matchesTagFilters(task);
+                if (directlyMatches) {
+                    includedMemo.set(task.id, true);
+                    return true;
+                }
+                const parent = task.source === 'checklist' && task.parentLine !== undefined
+                    ? tasksByLine.get(task.parentLine)
+                    : undefined;
+                // A descendant inherits its parent's scope, so nested checklist
+                // items do not need to repeat the parent's tags.
+                const inherited = Boolean(parent && matchesBaseFilters(task) && isIncluded(parent, nextVisiting));
+                includedMemo.set(task.id, inherited);
+                return inherited;
+            };
 
-                if (filters.excludeTags.length > 0 && filters.excludeTags.some(tag => t.rawText.includes(tag))) continue;
-
-                allTasks.push(t);
+            for (const task of fileTasks) {
+                if (isIncluded(task)) allTasks.push(task);
             }
         }
 
