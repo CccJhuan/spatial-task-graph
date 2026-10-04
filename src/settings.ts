@@ -1,6 +1,16 @@
-import { PluginSettingTab, Setting } from "obsidian";
+import { Notice, PluginSettingTab, Setting } from "obsidian";
 import type { App } from "obsidian"; 
 import SpatialTaskGraphPlugin from "./main"; 
+
+// Kept local so the plugin can compile against older Obsidian type definitions.
+// Obsidian 1.13+ consumes this shape for declarative settings search/rendering.
+type SettingDefinition = {
+    name: string;
+    desc?: string;
+    visible?: boolean | (() => boolean);
+    action?: () => void;
+    control?: { type: 'toggle' | 'text' | 'dropdown'; key: string; defaultValue?: unknown; options?: Record<string, string> };
+};
 
 const isSimplifiedChinese = (): boolean => {
     // Use the browser locale so this remains compatible with the plugin's minimum Obsidian version.
@@ -10,10 +20,87 @@ const isSimplifiedChinese = (): boolean => {
 
 export class TaskGraphSettingTab extends PluginSettingTab {
     plugin: SpatialTaskGraphPlugin;
+    private declarativeClearArmed = false;
+    private declarativeClearTimer?: number;
 
     constructor(app: App, plugin: SpatialTaskGraphPlugin) {
         super(app, plugin);
         this.plugin = plugin;
+    }
+
+    /**
+     * Supplies searchable settings on Obsidian 1.13+ while display() remains
+     * the fallback renderer for older Obsidian versions.
+     */
+    getSettingDefinitions(): SettingDefinition[] {
+        const zh = isSimplifiedChinese();
+        const text = zh ? {
+            advanced: '启用高级功能', autoFit: '布局后自动适应视图', syncHierarchy: '布局前同步层级',
+            taskNotes: 'TaskNotes 集成', enable: '启用 TaskNotes', identification: '识别方式', tag: 'Frontmatter 标签', property: '属性和值',
+            taskTag: '任务标签', propertyName: '任务属性名', propertyValue: '任务属性值', title: '标题属性', status: '状态属性',
+            backlog: '待办状态', progress: '进行中状态', finished: '完成状态', clear: '清除任务索引', clearDesc: '清除看板索引、任务引用和插件生成的块引用。不会删除任务内容。', confirm: '再次点击确认清除'
+        } : {
+            advanced: 'Enable advanced features', autoFit: 'Auto-fit after layout', syncHierarchy: 'Sync hierarchy before layout',
+            taskNotes: 'TaskNotes integration', enable: 'Enable TaskNotes', identification: 'Identification method', tag: 'Frontmatter tag', property: 'Property and value',
+            taskTag: 'Task tag', propertyName: 'Task property name', propertyValue: 'Task property value', title: 'Title property', status: 'Status property',
+            backlog: 'Backlog statuses', progress: 'In-progress statuses', finished: 'Finished statuses', clear: 'Clear task index', clearDesc: 'Clear board indexes, task references, and plugin-generated block references. Task content will not be deleted.', confirm: 'Click again to confirm'
+        };
+        const control = (name: string, key: string, type: 'toggle' | 'text' | 'dropdown', options?: Record<string, string>): SettingDefinition => ({ name, control: { type, key, options } });
+        const taskNotes = (definition: SettingDefinition): SettingDefinition => ({ ...definition, visible: () => this.plugin.settings.taskNotes.enabled });
+        return [
+            control(text.advanced, 'advanced', 'toggle'),
+            control(text.autoFit, 'autoFitAfterLayout', 'toggle'),
+            control(text.syncHierarchy, 'autoSyncHierarchy', 'toggle'),
+            { name: text.taskNotes },
+            control(text.enable, 'taskNotes.enabled', 'toggle'),
+            taskNotes(control(text.identification, 'taskNotes.identificationMethod', 'dropdown', { tag: text.tag, property: text.property })),
+            taskNotes(control(text.taskTag, 'taskNotes.taskTag', 'text')),
+            taskNotes(control(text.propertyName, 'taskNotes.propertyName', 'text')),
+            taskNotes(control(text.propertyValue, 'taskNotes.propertyValue', 'text')),
+            taskNotes(control(text.title, 'taskNotes.titleProperty', 'text')),
+            taskNotes(control(text.status, 'taskNotes.statusProperty', 'text')),
+            taskNotes(control(text.backlog, 'taskNotes.backlogStatuses', 'text')),
+            taskNotes(control(text.progress, 'taskNotes.inProgressStatuses', 'text')),
+            taskNotes(control(text.finished, 'taskNotes.finishedStatuses', 'text')),
+            { name: text.clear, desc: text.clearDesc, visible: () => this.plugin.settings.taskNotes.enabled, action: () => this.clearTaskIndexDeclaratively(text.confirm) }
+        ];
+    }
+
+    getControlValue(key: string): unknown {
+        if (key === 'advanced') return true;
+        const parts = key.split('.');
+        let value: unknown = this.plugin.settings;
+        for (const part of parts) {
+            if (!value || typeof value !== 'object') return undefined;
+            value = (value as Record<string, unknown>)[part];
+        }
+        return value;
+    }
+
+    setControlValue(key: string, value: unknown): void {
+        if (key === 'advanced') return;
+        const parts = key.split('.');
+        let target: Record<string, unknown> = this.plugin.settings as unknown as Record<string, unknown>;
+        for (const part of parts.slice(0, -1)) target = target[part] as Record<string, unknown>;
+        const leaf = parts[parts.length - 1];
+        if (!leaf) return;
+        target[leaf] = value;
+        void this.plugin.saveSettings();
+        if (key.startsWith('taskNotes.')) this.plugin.refreshTaskNotesCache();
+        (this as unknown as { update?: () => void }).update?.();
+    }
+
+    private clearTaskIndexDeclaratively(confirmText: string): void {
+        if (!this.declarativeClearArmed) {
+            this.declarativeClearArmed = true;
+            if (this.declarativeClearTimer !== undefined) window.clearTimeout(this.declarativeClearTimer);
+            this.declarativeClearTimer = window.setTimeout(() => { this.declarativeClearArmed = false; }, 5000);
+            new Notice(confirmText);
+            return;
+        }
+        this.declarativeClearArmed = false;
+        if (this.declarativeClearTimer !== undefined) window.clearTimeout(this.declarativeClearTimer);
+        void this.plugin.clearTaskIndexAndGeneratedBlockIds();
     }
 
     display(): void {
