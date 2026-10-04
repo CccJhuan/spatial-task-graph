@@ -391,7 +391,7 @@ export default class TaskGraphPlugin extends Plugin {
             }
         }
         // 显式等待视图被激活和渲染
-		if (leaf) await workspace.revealLeaf(leaf);
+        if (leaf) workspace.setActiveLeaf(leaf, { focus: true });
 	}
 
 	async ensureBlockId(boardId: string, taskId: string): Promise<string> {

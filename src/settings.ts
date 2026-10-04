@@ -1,9 +1,9 @@
-import { PluginSettingTab, Setting } from "obsidian";
+import { PluginSettingTab, Setting, getLanguage } from "obsidian";
 import type { App } from "obsidian"; 
 import SpatialTaskGraphPlugin from "./main"; 
 
 const isSimplifiedChinese = (): boolean => {
-    const obsidianLocale = window.localStorage.getItem('language') || window.navigator.language || '';
+    const obsidianLocale = getLanguage() || window.navigator.language || '';
     return /^(zh(?:-cn|-hans)?)(?:$|-)/i.test(obsidianLocale);
 };
 
