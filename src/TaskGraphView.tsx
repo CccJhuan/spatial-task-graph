@@ -866,8 +866,8 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           const newEdge = { id: `e${newSourceId}-${newTargetId}`, source: newSourceId, target: newTargetId, animated: true };
 
           setNodes(nds => nds.map(n => {
-              if (n.id === params.source) return { ...n, id: newSourceId } as AppNode;
-              if (n.id === params.target) return { ...n, id: newTargetId } as AppNode;
+              if (n.id === params.source) return { ...n, id: newSourceId };
+              if (n.id === params.target) return { ...n, id: newTargetId };
               return n;
           }));
 
