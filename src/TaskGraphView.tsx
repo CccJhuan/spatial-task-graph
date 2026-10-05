@@ -1120,15 +1120,13 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
               ['blocked', 'Blocked'], ['finished', 'Finished']
           ] as const;
           for (const [status, label] of statuses) {
-              const doc = event.currentTarget.ownerDocument;
-              const title = doc.createDocumentFragment();
-              const row = doc.createElement('span');
-              row.className = 'task-status-menu-label';
-              const marker = doc.createElement('span');
-              marker.className = 'task-status-menu-marker';
-              marker.style.backgroundColor = STATUS_COLORS[status];
+              const title = event.currentTarget.ownerDocument.createDocumentFragment();
+              const row = title.createEl('span', { cls: 'task-status-menu-label' });
+              const marker = row.createEl('span', { cls: 'task-status-menu-marker' });
+              marker.setCssProps({ '--task-status-color': STATUS_COLORS[status] });
               marker.setAttribute('aria-hidden', 'true');
-              row.append(marker, doc.createTextNode(label));
+              row.append(marker);
+              row.appendText(label);
               title.append(row);
               menu.addItem(item => item.setTitle(title).onClick(() => { void updateNodeStatus(node.id, status); }));
           }

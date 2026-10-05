@@ -117,7 +117,7 @@ input[type="checkbox"].filter-checkbox:checked::after { content: ''; position: a
 .sidebar-title { flex-shrink: 0; line-height: 16px; }
 .sidebar-list { overflow-y: auto; flex: 0 0 auto; min-height: 0; padding-right: 4px; scroll-snap-type: y mandatory; transition: background 0.2s; border-radius: 8px; }
 .task-status-menu-label { display: inline-flex; align-items: center; gap: 10px; }
-.task-status-menu-marker { display: inline-block; width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; }
+.task-status-menu-marker { display: inline-block; width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; background: var(--task-status-color); }
 .sidebar-list.drag-over { background: rgba(var(--interactive-accent-rgb), 0.1); border: 2px dashed var(--interactive-accent); }
 .sidebar-item { box-sizing: border-box; height: 36px; line-height: 20px; scroll-snap-align: start; font-size: 12px; padding: 8px 10px; margin-bottom: 6px; background: var(--background-primary); border-radius: 8px; cursor: grab; transition: all 0.2s; border-left: 3px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-normal); }
 .sidebar-item:last-child { margin-bottom: 0; }
