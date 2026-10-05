@@ -22,6 +22,7 @@ import ReactFlow, {
 
 import TaskGraphPlugin, { GraphBoard, TaskCacheItem } from './main';
 import { isSimplifiedChinese } from './language';
+import { synchronizeHierarchy } from './taskHierarchy';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
@@ -85,7 +86,7 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isCo
       <div style={{ height: '6px', width: '100%', background: statusColor, opacity: 0.8, flexShrink: 0 }}></div>
       <div style={{ padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
-            <span style={{ fontSize: '10px', fontWeight: '600', color: statusColor, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{data.rawStatus || (data.customStatus === 'default' ? 'TASK' : data.customStatus.replace('_', ' '))}</span>
+            <span style={{ fontSize: '10px', fontWeight: '600', color: statusColor, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{data.source === 'tasknotes' && data.rawStatus.trim() ? data.rawStatus : (data.customStatus === 'default' ? 'Task' : data.customStatus.replace('_', ' '))}</span>
             <div className="edit-btn" onClick={(e) => { e.stopPropagation(); data.onEdit(data); }} title="Edit task">✎</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
@@ -1017,28 +1018,18 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       setRefreshKey(prev => prev + 1);
   };
 
-  const handleSyncRelations = async (notify = true) => {
+  const handleSyncRelations = async (notify = false) => {
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (!board) return;
-      const tasks = plugin.getTasks(activeBoardId).filter(task => task.source === 'checklist');
-      const byLine = new Map(tasks.map(task => [`${task.path}::${task.line}`, task]));
-      const nextEdges = [...(board.data.edges || edges)];
-      let added = 0;
-      for (const child of tasks) {
-          if (child.parentLine === undefined || child.parentLine < 0) continue;
-          const parent = byLine.get(`${child.path}::${child.parentLine}`);
-          if (!parent || nextEdges.some(edge => edge.source === parent.id && edge.target === child.id)) continue;
-          nextEdges.push({ id: `e${parent.id}-${child.id}`, source: parent.id, target: child.id, animated: true });
-          added++;
-      }
-      if (added === 0) {
-          if (notify) new Notice('No new hierarchical relations found.');
+      const { edges: nextEdges, added, removed } = synchronizeHierarchy(plugin.getTasks(activeBoardId), board.data.edges || edges);
+      if (added === 0 && removed === 0) {
+          if (notify) new Notice('Document relations are already synchronized.');
           return;
       }
       setEdges(nextEdges);
       await plugin.saveBoardData(activeBoardId, { edges: nextEdges });
       setRefreshKey(prev => prev + 1);
-      if (notify) new Notice(`Synced ${added} relation(s) from document indentation.`);
+      if (notify) new Notice(`Synced document relations: ${added} added, ${removed} removed.`);
   };
 
   const handleAutoLayout = async () => {
