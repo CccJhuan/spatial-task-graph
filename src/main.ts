@@ -2,6 +2,7 @@ import { Plugin, WorkspaceLeaf, TFile, debounce, Notice } from 'obsidian';
 import type { Edge, Viewport } from 'reactflow';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
 import { TaskGraphSettingTab } from './settings';
+import { FilterCondition, getFilterConditions, matchesFilterConditions } from './taskFilters';
 import { frontmatterTags, matchesTaskNotesIdentifier, parseTaskNotesFrontmatter, taskNotesStatusForCategory, TaskNotesSettings, TaskNotesStatusCategory } from './tasknotesAdapter';
 
 export interface TextNodeData { id: string; text: string; x: number; y: number; }
@@ -26,7 +27,7 @@ export interface TaskCacheItem {
 
 export interface GraphBoard {
 	id: string; name: string;
-	filters: { tags: string[]; excludeTags: string[]; folders: string[]; status: string[]; tagMode?: 'AND' | 'OR'; };
+	filters: { tags: string[]; excludeTags: string[]; folders: string[]; status: string[]; tagMode?: 'AND' | 'OR'; conditions?: FilterCondition[]; };
 	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; collapsedNodes?: Record<string, boolean>; taskPaths?: string[]; generatedBlockIds?: string[]; }
 }
 
@@ -340,6 +341,7 @@ export default class TaskGraphPlugin extends Plugin {
 		if (!this.settings.boards || this.settings.boards.length === 0) {
 			this.settings.boards = [DEFAULT_BOARD];
 		}
+
 	}
 
 	async saveSettings() {
@@ -590,6 +592,7 @@ export default class TaskGraphPlugin extends Plugin {
         if (!board) return [];
 
 		const filters = board.filters;
+        const conditions = getFilterConditions(filters);
         
 		const connectedTaskIds = new Set<string>();
 		board.data.edges.forEach((e: Edge) => { 
@@ -604,7 +607,6 @@ export default class TaskGraphPlugin extends Plugin {
             ? indexedPaths.map(path => [path, this.taskCache.get(path) || []] as const)
             : Array.from(this.taskCache.entries());
         for (const [path, fileTasks] of taskEntries) {
-            if (filters.folders.length > 0 && !filters.folders.some(folder => path.startsWith(folder))) continue;
 
             const tasksByLine = new Map(fileTasks.filter(task => task.source === 'checklist').map(task => [task.line, task]));
             const includedMemo = new Map<string, boolean>();
@@ -613,13 +615,7 @@ export default class TaskGraphPlugin extends Plugin {
                 return (isConnected || filters.status.length === 0 || filters.status.includes(task.status));
             };
             const matchesTagFilters = (task: TaskCacheItem) => {
-                if (filters.tags.length > 0) {
-                    const tagMode = filters.tagMode || 'OR';
-                    const matchesTags = tagMode === 'OR'
-                        ? filters.tags.some(tag => task.rawText.includes(tag))
-                        : filters.tags.every(tag => task.rawText.includes(tag));
-                    if (!matchesTags) return false;
-                }
+                if (!matchesFilterConditions(task.rawText, path, conditions)) return false;
                 return filters.excludeTags.length === 0 || !filters.excludeTags.some(tag => task.rawText.includes(tag));
             };
             const isIncluded = (task: TaskCacheItem, visiting = new Set<string>()): boolean => {

@@ -53,3 +53,25 @@ const overlap = synchronizeHierarchy(tasks, [{ id: 'manual-parent', source: 'a',
 assert.equal(overlap.edges.filter(edge => edge.source === 'a' && edge.target === 'b').length, 1);
 console.log('Hierarchy synchronization tests passed');
 
+const filtersSource = await readFile(new URL('../src/taskFilters.ts', import.meta.url), 'utf8');
+const filtersCompiled = await transform(filtersSource, { loader: 'ts', format: 'esm', target: 'es2020' });
+const { getFilterConditions, matchesFilterConditions, filterSuggestions } = await import(`data:text/javascript,${encodeURIComponent(filtersCompiled.code)}`);
+const condition = (field, value, operator = 'AND', enabled = true) => ({ field, value, operator, enabled });
+assert.deepEqual(filterSuggestions(['#task-example', '#project/test'], 'example'), ['#task-example']);
+assert.deepEqual(filterSuggestions(['#task-example', '#project/test'], '#test'), ['#project/test']);
+assert.equal(matchesFilterConditions('#task-example', 'Work/a.md', [condition('tag', 'task-example')]), true);
+assert.equal(matchesFilterConditions('#task-example', 'Work/a.md', [condition('tag', 'task')]), false);
+assert.equal(matchesFilterConditions('#task-example', 'Work/a.md', [condition('tag', 'task-example'), condition('path', 'Work')]), true);
+assert.equal(matchesFilterConditions('#task-example', 'Home/a.md', [condition('tag', 'task-example'), condition('path', 'Work')]), false);
+assert.equal(matchesFilterConditions('#other', 'Work/a.md', [condition('tag', 'task-example'), condition('path', 'Work', 'OR')]), true);
+assert.equal(matchesFilterConditions('#other', 'Home/a.md', [condition('tag', 'task-example', 'AND', false)]), true);
+assert.equal(matchesFilterConditions('', 'Work-other/a.md', [condition('path', 'Work')]), false);
+assert.equal(matchesFilterConditions('', 'Work/a.md', [condition('path', 'Work/a.md')]), true);
+assert.equal(matchesFilterConditions('', 'Work/b.md', [condition('path', 'Work/a.md')]), false);
+const legacy = getFilterConditions({ tags: ['#a', '#b'], folders: ['Work', 'Home'], tagMode: 'AND' });
+assert.equal(matchesFilterConditions('#a #b', 'Home/a.md', legacy), true);
+assert.equal(matchesFilterConditions('#a', 'Home/a.md', legacy), false);
+assert.equal(matchesFilterConditions('#b', 'Home/a.md', getFilterConditions({ tags: ['#a', '#b'], folders: ['Home'], tagMode: 'OR' })), true);
+assert.equal(matchesFilterConditions('', 'Work/a.md', [condition('tag', 'missing'), condition('path', 'Work', 'OR'), condition('tag', 'required')]), false);
+console.log('Filter condition tests passed');
+

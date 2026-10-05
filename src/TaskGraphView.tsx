@@ -23,6 +23,8 @@ import ReactFlow, {
 import TaskGraphPlugin, { GraphBoard, TaskCacheItem } from './main';
 import { isSimplifiedChinese } from './language';
 import { synchronizeHierarchy } from './taskHierarchy';
+import { FilterCondition, getFilterConditions, filterSuggestions } from './taskFilters';
+import { PanelDropdown } from './PanelDropdown';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
@@ -322,7 +324,7 @@ interface ControlPanelProps {
     onResetView: () => void;
     currentBoard: GraphBoard | undefined;
     onUpdateFilter: (type: string, value: string) => Promise<void>;
-    onApplyFilters: (tags: string, folders: string, tagMode: 'AND' | 'OR') => Promise<void>;
+    onApplyFilters: (conditions: FilterCondition[]) => Promise<void>;
     onRequestConfirm: (msg: string, action: () => void) => void;
     allTags: string[];
     allFolders: string[];
@@ -334,15 +336,12 @@ const AutocompleteInput = ({ value, onChange, options, placeholder }: { value: s
     const [show, setShow] = React.useState(false);
     const [selectedIndex, setSelectedIndex] = React.useState(-1);
 
-    const parts = value.split(',').map(s => s.trim());
+    const parts = value.split(/[,，]/).map(s => s.trim());
     const currentTyping = parts.pop()?.toLowerCase() || '';
     const existing = parts.filter(p => p !== '');
 
     let filtered = options.filter(o => !existing.includes(o));
-    if (currentTyping) {
-        filtered = filtered.filter(o => o.toLowerCase().includes(currentTyping));
-    }
-    filtered = filtered.slice(0, 10);
+    filtered = filterSuggestions(filtered, currentTyping);
 
     React.useEffect(() => {
         setSelectedIndex(-1);
@@ -351,7 +350,7 @@ const AutocompleteInput = ({ value, onChange, options, placeholder }: { value: s
     const handleSelect = (opt: string) => {
         const newParts = [...parts];
         newParts.push(opt);
-        onChange(newParts.join(', ') + (newParts.length > 0 ? ', ' : ''));
+        onChange(newParts.join(', '));
         setShow(false);
         setSelectedIndex(-1);
     };
@@ -416,19 +415,37 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     const [isRenaming, setIsRenaming] = React.useState(false);
     const [tempName, setTempName] = React.useState('');
 
-    const [localTags, setLocalTags] = React.useState('');
-    const [localFolders, setLocalFolders] = React.useState('');
-
-    const [tagMode, setTagMode] = React.useState<'AND' | 'OR'>('OR');
-    const [isApplying, setIsApplying] = React.useState(false);
+    const [conditions, setConditions] = React.useState<FilterCondition[]>([]);
+    const zh = isSimplifiedChinese();
+    const updateCondition = (index: number, patch: Partial<FilterCondition>) => setConditions(rows => rows.map((row, i) => i === index ? { ...row, ...patch } : row));
+    const [actionStates, setActionStates] = React.useState<Record<string, 'idle' | 'running' | 'done' | 'error'>>({});
+    const feedbackTimers = React.useRef<number[]>([]);
+    React.useEffect(() => () => feedbackTimers.current.forEach(timer => window.clearTimeout(timer)), []);
+    const runAction = async (name: string, action: () => Promise<void>) => {
+        if (actionStates[name] === 'running') return;
+        setActionStates(states => ({ ...states, [name]: 'running' }));
+        try {
+            await action();
+            setActionStates(states => ({ ...states, [name]: 'done' }));
+        } catch (error) {
+            console.error(`Task graph ${name} failed:`, error);
+            setActionStates(states => ({ ...states, [name]: 'error' }));
+        }
+        const timer = window.setTimeout(() => {
+            setActionStates(states => ({ ...states, [name]: 'idle' }));
+            feedbackTimers.current = feedbackTimers.current.filter(item => item !== timer);
+        }, 1600);
+        feedbackTimers.current.push(timer);
+    };
+    const actionLabel = (name: string, fallback: string) => actionStates[name] === 'running' ? (zh ? '处理中…' : 'Working…')
+        : actionStates[name] === 'done' ? (zh ? '✓ 已完成' : '✓ Done')
+        : actionStates[name] === 'error' ? (zh ? '重试' : 'Retry') : fallback;
 
     React.useEffect(() => {
         setIsRenaming(false);
         setTempName(currentBoard?.name || '');
         if (currentBoard) {
-            setLocalTags(currentBoard.filters.tags.join(', '));
-            setLocalFolders(currentBoard.filters.folders.join(', '));
-            setTagMode(currentBoard.filters.tagMode === 'AND' ? 'AND' : 'OR');
+            setConditions(getFilterConditions(currentBoard.filters));
         }
     }, [currentBoard]);
 
@@ -441,12 +458,7 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
 
     const handleResetClick = () => { onResetView(); };
 
-    const handleApplyFiltersClick = () => {
-        setIsApplying(true);
-        void onApplyFilters(localTags, localFolders, tagMode);
-        new Notice(`Filters applied! (tags logic: ${tagMode})`);
-        window.setTimeout(() => setIsApplying(false), 1200);
-    };
+    const handleApplyFiltersClick = () => { void runAction('filters', () => onApplyFilters(conditions)); };
 
     const stopPropagation = (e: React.MouseEvent | React.KeyboardEvent) => { e.stopPropagation(); };
     const stopKeys = (e: React.KeyboardEvent) => e.stopPropagation();
@@ -454,35 +466,37 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     const btnStyle = { background: 'var(--background-secondary)', border: '1px solid var(--background-modifier-border)', color: 'var(--text-normal)', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', fontWeight: '500' };
     const activeBtnStyle = { ...btnStyle, background: 'var(--interactive-accent)', color: 'white', border: 'none', boxShadow: '0 2px 8px rgba(var(--interactive-accent-rgb), 0.3)' };
 
-    return (<Panel position="top-right" style={{ position: 'absolute', top: '20px', right: '20px', background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', width: '280px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', pointerEvents: 'all', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...sharedInputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: GraphBoard) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={() => void onAddBoard()} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={() => void onAutoLayout()}>⚡ Layout</button><button style={btnStyle} onClick={() => void onSyncRelations()}>🔗 Sync</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleResetClick}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}>
+    return (<Panel position="top-right" className={showFilters ? "task-control-panel filters-open" : "task-control-panel"} style={{ position: 'absolute', top: '20px', right: '20px', background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', width: '280px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', pointerEvents: 'all', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...sharedInputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><PanelDropdown className="task-board-dropdown" label="Board" value={activeBoardId} onChange={onSwitchBoard} options={boards.map(board => ({ value: board.id, label: board.name }))} /><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={() => void onAddBoard()} title="New">+</button></>)}</div><div className="task-control-actions"><div className="task-control-actions-inner"><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}><button disabled={actionStates.layout === "running"} style={actionStates.layout === "done" ? activeBtnStyle : btnStyle} onClick={() => void runAction("layout", onAutoLayout)}>{actionLabel("layout", "⚡ Layout")}</button><button disabled={actionStates.sync === "running"} style={actionStates.sync === "done" ? activeBtnStyle : btnStyle} onClick={() => void runAction("sync", onSyncRelations)}>{actionLabel("sync", "🔗 Sync")}</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleResetClick}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div></div></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}>
 
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginBottom: '8px' }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-                <AutocompleteInput value={localTags} onChange={setLocalTags} options={allTags} placeholder="e.g. #urgent, #work" />
-            </div>
-            <button
-                style={{ ...btnStyle, height: '33px', margin: 0, padding: '0 4px', width: '46px', flexShrink: 0,
-                         background: tagMode === 'AND' ? 'var(--interactive-accent)' : 'var(--background-secondary)',
-                         color: tagMode === 'AND' ? 'white' : 'var(--text-normal)',
-                         border: tagMode === 'AND' ? 'none' : '1px solid var(--background-modifier-border)' }}
-                onClick={() => setTagMode(prev => prev === 'AND' ? 'OR' : 'AND')}
-                title={`Currently matching ${tagMode === 'AND' ? 'ALL' : 'ANY'} tags. Click to toggle.`}
-            >
-                {tagMode}
-            </button>
+        <div className="task-filter-conditions">
+            {conditions.map((condition, index) => (
+                <div className="task-filter-row" key={index}>
+                    {index === 0 ? <span className="task-filter-first">{zh ? '当' : 'When'}</span> : (
+                        <PanelDropdown className="task-filter-logic" label="Condition logic" value={condition.operator}
+                            onChange={value => updateCondition(index, { operator: value as 'AND' | 'OR' })}
+                            options={[{ value: 'AND', label: zh ? '与' : 'And' }, { value: 'OR', label: zh ? '或' : 'Or' }]} />
+                    )}
+                    <PanelDropdown className="task-filter-type" label="Filter type" value={condition.field}
+                        onChange={value => updateCondition(index, { field: value as 'tag' | 'path', value: '' })}
+                        options={[{ value: 'tag', label: zh ? '标签' : 'Tag' }, { value: 'path', label: zh ? '路径' : 'Path' }]} />
+                    <div className="task-filter-value">
+                        <AutocompleteInput value={condition.value} onChange={value => updateCondition(index, { value })} options={condition.field === 'tag' ? allTags : allFolders} placeholder={condition.field === 'tag' ? '#task-example' : 'Projects/Work'} />
+                    </div>
+                    <input className="task-filter-enable" aria-label="Enable condition" type="checkbox" checked={condition.enabled} onChange={e => updateCondition(index, { enabled: e.target.checked })} />
+                    <button className="task-filter-remove" type="button" aria-label="Remove condition" onClick={() => setConditions(rows => rows.filter((_, i) => i !== index))}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6" /></svg></button>
+                </div>
+            ))}
         </div>
-
-        <div style={{ marginBottom: '8px' }}>
-             <AutocompleteInput value={localFolders} onChange={setLocalFolders} options={allFolders} placeholder="e.g. Projects/Work" />
-        </div>
+        <button className="task-add-condition" type="button" style={{ ...btnStyle, width: '100%' }} onClick={() => setConditions(rows => [...rows, { operator: 'AND', field: 'tag', value: '', enabled: true }])}>{zh ? '+ 添加筛选条件' : '+ Add condition'}</button>
+        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '6px' }}>{zh ? '按从上到下的顺序组合条件。' : 'Conditions combine from top to bottom.'}</div>
 
         <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>{[' ', '/', 'x'].map(status => (<label key={status} style={{fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-normal)'}}><input type="checkbox" className="filter-checkbox" checked={currentBoard.filters.status.includes(status)} onChange={() => { void onUpdateFilter('status', status); }} /> {status === ' ' ? 'Todo' : status === '/' ? 'Doing' : 'Done'}</label>))}</div>
 
         <button style={{...btnStyle, width: '100%', marginTop: '14px',
-                        background: isApplying ? 'var(--interactive-success, #28a745)' : 'var(--interactive-accent)',
+                        background: actionStates.filters === 'done' ? 'var(--interactive-success, #28a745)' : 'var(--interactive-accent)',
                         color: 'white', border: 'none', transition: 'background 0.3s ease'}}
-                onClick={handleApplyFiltersClick}>
-            {isApplying ? '✅ Applied!' : 'Apply filters'}
+                disabled={actionStates.filters === "running"} onClick={handleApplyFiltersClick}>
+            {actionLabel('filters', 'Apply filters')}
         </button>
 
     </div>)}</Panel>);
@@ -508,7 +522,7 @@ const HelpPanel = ({ onClose }: { onClose: () => void }) => {
                 ]},
                 { heading: '🔍 Boards & filters', items: [
                     'Filter: Use the top-right panel to filter by Tags/Folders. Use Up/Down arrows and Enter to autocomplete.',
-                    'Logic: Click the "AND/OR" button to toggle between matching ALL or ANY tags.',
+                    'Logic: Add tag or path conditions and choose And/Or. Conditions combine from top to bottom.',
                     'Boards: Create multiple boards. Zoom/pan positions are independently saved per board.'
                 ]},
                 { heading: '📐 Layout & shortcuts', items: [
@@ -533,7 +547,7 @@ const HelpPanel = ({ onClose }: { onClose: () => void }) => {
                 ]},
                 { heading: '🔍 画板与检索', items: [
                     '高效检索：支持键盘上下键与回车快速补全路径和标签。',
-                    '逻辑切换：点击输入框旁的 "AND / OR" 按钮，控制匹配所有标签或任意标签。',
+                    '逻辑筛选：添加标签或路径条件，选择与/或，按从上到下的顺序组合。',
                     '多画板：系统将为您独立保存每一个画板的专属缩放与坐标位置。'
                 ]},
                 { heading: '📐 排版与快捷键', items: [
@@ -628,6 +642,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
 
       const folderSet = new Set<string>();
       for (const path of plugin.taskCache.keys()) {
+          folderSet.add(path);
           const parts = path.split('/');
           parts.pop();
           let currentPath = '';
@@ -1008,12 +1023,10 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
   const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
 
-  const handleApplyFilters = async (tagsStr: string, foldersStr: string, tagMode: 'AND' | 'OR') => {
+  const handleApplyFilters = async (conditions: FilterCondition[]) => {
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (!board) return;
-      board.filters.tags = tagsStr.split(',').map(s => s.trim()).filter(s => s);
-      board.filters.folders = foldersStr.split(',').map(s => s.trim()).filter(s => s);
-      board.filters.tagMode = tagMode;
+      board.filters.conditions = conditions.map(condition => ({ ...condition }));
       await plugin.saveSettings();
       setRefreshKey(prev => prev + 1);
   };
@@ -1202,7 +1215,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes, taskPaths });
       }
 
-      new Notice("Smart layout applied.");
+
 
       if (plugin.settings.autoFitAfterLayout) {
           const activeNodesToFocus = nodes.filter(n => {
