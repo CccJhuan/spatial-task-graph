@@ -1455,7 +1455,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   const openTaskSearch = React.useCallback(() => { setSearchConnectionSource(null); setShowTaskSearch(true); }, []);
 
   return (
-    <div ref={canvasRef} className={`task-graph-container ${isConnecting ? 'is-connecting' : ''} ${isBoardSwitching ? 'is-board-switching' : ''}`} aria-busy={isBoardSwitching} onContextMenu={onPaneContextMenu}>
+    <div ref={canvasRef} className={`task-graph-container ${isConnecting ? 'is-connecting' : ''} ${isBoardSwitching ? 'is-board-switching' : ''} ${!plugin.isCacheInitialized ? 'is-task-loading' : ''}`} aria-busy={isBoardSwitching || !plugin.isCacheInitialized} onContextMenu={onPaneContextMenu}>
       <TaskSidebar nodes={nodes} onNodeCenter={centerSidebarTask} onStatusChange={changeSidebarStatus} onSearch={openTaskSearch} />
       {showTaskSearch && <TaskSearch mode={searchConnectionSource ? 'connect' : 'focus'} tasks={nodes.filter(isTaskNode).filter(node => node.id !== searchConnectionSource && (!searchConnectionSource || !edges.some(edge => edge.source === searchConnectionSource && edge.target === node.id))).map(node => ({ id: node.id, label: node.data.label, path: node.data.path }))}
           onClose={() => { setShowTaskSearch(false); setSearchConnectionSource(null); }} onSelect={id => {
