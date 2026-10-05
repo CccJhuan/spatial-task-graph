@@ -75,3 +75,24 @@ assert.equal(matchesFilterConditions('#b', 'Home/a.md', getFilterConditions({ ta
 assert.equal(matchesFilterConditions('', 'Work/a.md', [condition('tag', 'missing'), condition('path', 'Work', 'OR'), condition('tag', 'required')]), false);
 console.log('Filter condition tests passed');
 
+const navigationSource = (await readFile(new URL('../src/taskNavigation.ts', import.meta.url), 'utf8'))
+  .replace("import { TFile } from 'obsidian';", 'export class TFile {}');
+const navigationCompiled = await transform(navigationSource, { loader: 'ts', format: 'esm', target: 'es2020' });
+const navigation = await import(`data:text/javascript,${encodeURIComponent(navigationCompiled.code)}`);
+const opened = [];
+const mockApp = {
+  vault: { getAbstractFileByPath: () => new navigation.TFile() },
+  metadataCache: { getFileCache: () => ({ blocks: { stable: { position: { start: { line: 42 } } } } }) },
+  workspace: { openLinkText: async (...args) => { opened.push(args); } }
+};
+await navigation.openTaskLocation(mockApp, { id: 'tasks.md::^stable', path: 'tasks.md', line: 3, source: 'checklist' });
+assert.equal(opened[0][0], 'tasks.md#^stable');
+assert.equal(opened[0][3].eState.line, 42);
+await navigation.openTaskLocation(mockApp, { id: 'tasks.md::#plain', path: 'tasks.md', line: 7, source: 'checklist' });
+assert.equal(opened[1][0], 'tasks.md');
+assert.equal(opened[1][3].eState.line, 7);
+await navigation.openTaskLocation(mockApp, { id: 'note.md', path: 'note.md', line: -1, source: 'tasknotes' });
+assert.equal(opened[2][0], 'note.md');
+assert.equal(opened[2][3].eState.line, 0);
+console.log('Task navigation tests passed');
+

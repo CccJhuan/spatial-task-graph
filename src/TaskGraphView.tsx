@@ -21,10 +21,12 @@ import ReactFlow, {
 } from 'reactflow';
 
 import TaskGraphPlugin, { GraphBoard, TaskCacheItem } from './main';
-import { isSimplifiedChinese } from './language';
 import { synchronizeHierarchy } from './taskHierarchy';
 import { FilterCondition, getFilterConditions, filterSuggestions } from './taskFilters';
+import { isSimplifiedChinese } from './language';
 import { PanelDropdown } from './PanelDropdown';
+import { TaskSearch } from './TaskSearch';
+import { openTaskLocation } from './taskNavigation';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
@@ -275,7 +277,22 @@ const ConfirmModal = ({ message, onConfirm, onClose }: { message: string, onConf
     );
 };
 
-const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange }: { nodes: AppNode[], onNodeCenter: (nodeId: string) => void, onStatusChange: (id: string, status: string) => Promise<void> }) => {
+const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange, onSearch }: { nodes: AppNode[], onNodeCenter: (nodeId: string) => void, onStatusChange: (id: string, status: string) => Promise<void>, onSearch: () => void }) => {
+    const sidebarRef = React.useRef<HTMLDivElement>(null);
+    const [availableHeight, setAvailableHeight] = React.useState(600);
+    React.useLayoutEffect(() => {
+        const parent = sidebarRef.current?.parentElement;
+        if (!parent) return;
+        const updateHeight = () => setAvailableHeight(parent.clientHeight);
+        updateHeight();
+        const observer = new ResizeObserver(updateHeight);
+        observer.observe(parent);
+        return () => observer.disconnect();
+    }, []);
+    // Reserve panel padding, headings, and section gaps; allocate whole rows.
+    const rowHeight = 36;
+    const rowGap = 6;
+    const maxRows = Math.max(1, Math.floor((availableHeight - 198) / (3 * (rowHeight + rowGap))));
     const { inProgress, pending, backlog } = React.useMemo(() => {
         const tasks = nodes.filter(isTaskNode);
         return {
@@ -291,9 +308,9 @@ const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange }: { nodes: AppNode[]
     const handleDrop = (e: React.DragEvent, targetStatus: string) => { e.preventDefault(); const nodeId = e.dataTransfer.getData('nodeId'); if (nodeId) void onStatusChange(nodeId, targetStatus); };
 
     const renderList = (title: string, items: Node<TaskNodeData, 'task'>[], color: string, className: string, statusKey: string) => (
-        <div className="sidebar-section" onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, statusKey)}>
+        <div className={`sidebar-section${items.length === 0 ? ' is-empty' : ''}`} onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, statusKey)}>
             <div className="sidebar-title" style={{ color: color }}><div style={{ width: 6, height: 6, borderRadius: '50%', background: color }}></div>{title} <span style={{ opacity: 0.5 }}>({items.length})</span></div>
-            <div className="sidebar-list">
+            <div className="sidebar-list" style={{ height: items.length ? Math.min(items.length, maxRows) * (rowHeight + rowGap) - rowGap : 16 }}>
                 {items.map(node => (
                     <div key={node.id} className={`sidebar-item item-${className}`} onClick={() => onNodeCenter(node.id)} draggable onDragStart={(e) => handleDragStart(e, node.id)}>{node.data.label.replace(/#\S+/g, '').trim()}</div>
                 ))}
@@ -301,7 +318,7 @@ const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange }: { nodes: AppNode[]
             </div>
         </div>
     );
-    return (<div className="task-sidebar" onMouseDown={stopProp} onWheel={stopProp} onContextMenu={stopProp}><div style={{ marginBottom: '16px', fontSize: '16px', fontWeight: '800', letterSpacing: '-0.5px', color: 'var(--text-normal)' }}>My tasks</div>{renderList('In progress', inProgress, STATUS_COLORS['in_progress'], 'in-progress', 'in_progress')}{renderList('Pending', pending, STATUS_COLORS['pending'], 'pending', 'pending')}{renderList('Backlog', backlog, STATUS_COLORS['backlog'], 'backlog', 'backlog')}</div>);
+    return (<div ref={sidebarRef} className="task-sidebar" onMouseDown={stopProp} onWheel={stopProp} onContextMenu={stopProp}><div style={{ marginBottom: '16px', fontSize: '16px', lineHeight: '24px', flexShrink: 0, fontWeight: '800', letterSpacing: '-0.5px', color: 'var(--text-normal)'  , display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>My tasks<button type="button" className="task-sidebar-search" aria-label={isSimplifiedChinese() ? "搜索任务" : "Search tasks"} onClick={onSearch}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg></button></div>{renderList('In progress', inProgress, STATUS_COLORS['in_progress'], 'in-progress', 'in_progress')}{renderList('Pending', pending, STATUS_COLORS['pending'], 'pending', 'pending')}{renderList('Backlog', backlog, STATUS_COLORS['backlog'], 'backlog', 'backlog')}</div>);
 };
 
 const GraphToolbar = () => {
@@ -596,6 +613,10 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [activeBoardId, setActiveBoardId] = React.useState(plugin.settings.lastActiveBoardId);
   const [refreshKey, setRefreshKey] = React.useState(0);
+  const [isBoardSwitching, setIsBoardSwitching] = React.useState(false);
+  const boardSwitchTarget = React.useRef<string | null>(null);
+  const boardSwitchTimers = React.useRef<number[]>([]);
+  React.useEffect(() => () => boardSwitchTimers.current.forEach(timer => window.clearTimeout(timer)), []);
 
   const [editTarget, setEditTarget] = React.useState<{id: string, text: string, path: string, line: number, endLine: number, source: 'checklist' | 'tasknotes'} | null>(null);
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
@@ -604,6 +625,25 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   const [allFolders, setAllFolders] = React.useState<string[]>([]);
 
   const [showHelp, setShowHelp] = React.useState(false);
+  const [showTaskSearch, setShowTaskSearch] = React.useState(false);
+  const [pendingFocusId, setPendingFocusId] = React.useState<string | null>(null);
+  React.useEffect(() => {
+      const doc = view.containerEl.ownerDocument;
+      const ownerWindow = doc.defaultView || window;
+      const onSearchShortcut = (event: KeyboardEvent) => {
+          const focusedHere = view.containerEl.contains(doc.activeElement)
+              || event.composedPath().includes(view.containerEl)
+              || !!view.containerEl.closest('.workspace-leaf.mod-active');
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f'
+              && (focusedHere || plugin.app.workspace.getActiveViewOfType(TaskGraphView) === view)) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              setShowTaskSearch(true);
+          }
+      };
+      ownerWindow.addEventListener('keydown', onSearchShortcut, true);
+      return () => ownerWindow.removeEventListener('keydown', onSearchShortcut, true);
+  }, [plugin, view]);
   const [confirmReq, setConfirmReq] = React.useState<{ message: string, action: () => void } | null>(null);
 
   const [isConnecting, setIsConnecting] = React.useState(false);
@@ -676,7 +716,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
                   if (path.has(childId)) continue;
                   const task = taskById.get(childId);
                   if (!task) continue;
-                  rows.push({ task, depth, onToggle: () => handleToggleTask(task.id, task.status, task.path, task.line, task.source), onOpenFile: () => void plugin.app.workspace.openLinkText(task.path, '', false) });
+                  rows.push({ task, depth, onToggle: () => handleToggleTask(task.id, task.status, task.path, task.line, task.source), onOpenFile: () => { void openTaskLocation(plugin.app, task); } });
                   const nextPath = new Set(path); nextPath.add(childId);
                   visit(childId, depth + 1, nextPath);
               }
@@ -719,7 +759,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
                 onToggleCollapse: handleToggleCollapse,
                 onSaveNotes: handleSaveTaskNotes,
                 onEdit: handleEditTask, onToggleStatus: handleToggleTask,
-                onOpenFile: (path: string) => plugin.app.workspace.openLinkText(path, '', false)
+                onOpenFile: () => { void openTaskLocation(plugin.app, t); }
             }
         };
       });
@@ -744,6 +784,14 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       }
     };
     loadData();
+    if (boardSwitchTarget.current === activeBoardId) {
+        const timer = window.setTimeout(() => {
+            if (boardSwitchTarget.current !== activeBoardId) return;
+            setIsBoardSwitching(false);
+            boardSwitchTarget.current = null;
+        }, 180);
+        boardSwitchTimers.current.push(timer);
+    }
   }, [plugin, activeBoardId, refreshKey, reactFlowInstance]);
 
   const onConnectStart = React.useCallback((event: React.MouseEvent | React.TouchEvent, params: OnConnectStartParams) => {
@@ -985,11 +1033,23 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   const onNodeContextMenu = React.useCallback((event: React.MouseEvent, node: Node) => {
       event.preventDefault(); event.stopPropagation(); const menu = new Menu();
       if (node.type === 'task') {
-          menu.addItem((item) => item.setTitle('Backlog').onClick(() => { void updateNodeStatus(node.id, 'backlog'); }));
-          menu.addItem((item) => item.setTitle('Pending').onClick(() => { void updateNodeStatus(node.id, 'pending'); }));
-          menu.addItem((item) => item.setTitle('In progress').onClick(() => { void updateNodeStatus(node.id, 'in_progress'); }));
-          menu.addItem((item) => item.setTitle('Blocked').onClick(() => { void updateNodeStatus(node.id, 'blocked'); }));
-          menu.addItem((item) => item.setTitle('Finished').onClick(() => { void updateNodeStatus(node.id, 'finished'); }));
+          const statuses = [
+              ['backlog', 'Backlog'], ['pending', 'Pending'], ['in_progress', 'In progress'],
+              ['blocked', 'Blocked'], ['finished', 'Finished']
+          ] as const;
+          for (const [status, label] of statuses) {
+              const doc = event.currentTarget.ownerDocument;
+              const title = doc.createDocumentFragment();
+              const row = doc.createElement('span');
+              row.className = 'task-status-menu-label';
+              const marker = doc.createElement('span');
+              marker.className = 'task-status-menu-marker';
+              marker.style.backgroundColor = STATUS_COLORS[status];
+              marker.setAttribute('aria-hidden', 'true');
+              row.append(marker, doc.createTextNode(label));
+              title.append(row);
+              menu.addItem(item => item.setTitle(title).onClick(() => { void updateNodeStatus(node.id, status); }));
+          }
       } else if (node.type === 'text') {
           menu.addItem((item) => item.setTitle('Delete note').onClick(() => {
               void (async () => {
@@ -1005,7 +1065,21 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       menu.showAtPosition({ x: event.nativeEvent.clientX, y: event.nativeEvent.clientY });
   }, [plugin, activeBoardId, nodes]);
 
-  const handleSwitchBoard = (id: string) => { setActiveBoardId(id); plugin.settings.lastActiveBoardId = id; void plugin.saveSettings(); };
+  const handleSwitchBoard = (id: string) => {
+      if (id === activeBoardId && !isBoardSwitching) return;
+      boardSwitchTimers.current.forEach(timer => window.clearTimeout(timer));
+      boardSwitchTimers.current = [];
+      boardSwitchTarget.current = id;
+      setIsBoardSwitching(true);
+      setShowTaskSearch(false);
+      setPendingFocusId(null);
+      const timer = window.setTimeout(() => {
+          setActiveBoardId(id);
+          plugin.settings.lastActiveBoardId = id;
+          void plugin.saveSettings();
+      }, 140);
+      boardSwitchTimers.current.push(timer);
+  };
 
   const handleAddBoard = () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'], tagMode: 'OR' }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [], taskPaths: [...plugin.taskCache.keys()] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
 
@@ -1261,11 +1335,40 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       });
   };
 
-  const handleSidebarClick = (nodeId: string) => { const node = nodes.find(n => n.id === nodeId); if (node) { reactFlowInstance.setCenter(node.position.x + 120, node.position.y + 60, { zoom: 1.2, duration: 800 }); setNodes(nds => nds.map(n => ({ ...n, selected: n.id === nodeId }))); } };
+  const handleSidebarClick = (nodeId: string) => {
+      setPendingFocusId(nodeId);
+      const board = plugin.settings.boards.find(board => board.id === activeBoardId);
+      if (!board || !nodes.find(node => node.id === nodeId)?.hidden) return;
+      const ancestors = new Set<string>([nodeId]);
+      const queue = [nodeId];
+      while (queue.length) {
+          const child = queue.pop();
+          for (const edge of board.data.edges) {
+              if (edge.target !== child || ancestors.has(edge.source)) continue;
+              ancestors.add(edge.source);
+              queue.push(edge.source);
+          }
+      }
+      const collapsedNodes = { ...board.data.collapsedNodes };
+      for (const id of ancestors) collapsedNodes[id] = false;
+      void plugin.saveBoardData(activeBoardId, { collapsedNodes }).then(() => setRefreshKey(key => key + 1));
+  };
+
+  React.useEffect(() => {
+      if (!pendingFocusId) return;
+      const node = nodes.find(node => node.id === pendingFocusId && !node.hidden);
+      if (!node) return;
+      reactFlowInstance.setCenter(node.position.x + (node.width || 240) / 2,
+          node.position.y + (node.height || 120) / 2, { zoom: 1.5, duration: 500 });
+      setNodes(current => current.map(item => ({ ...item, selected: item.id === pendingFocusId })));
+      setPendingFocusId(null);
+  }, [nodes, pendingFocusId, reactFlowInstance, setNodes]);
 
   return (
-    <div className={`task-graph-container ${isConnecting ? 'is-connecting' : ''}`} onContextMenu={onPaneContextMenu}>
-      <TaskSidebar nodes={nodes} onNodeCenter={handleSidebarClick} onStatusChange={updateNodeStatus} />
+    <div className={`task-graph-container ${isConnecting ? 'is-connecting' : ''} ${isBoardSwitching ? 'is-board-switching' : ''}`} aria-busy={isBoardSwitching} onContextMenu={onPaneContextMenu}>
+      <TaskSidebar nodes={nodes} onNodeCenter={handleSidebarClick} onStatusChange={updateNodeStatus} onSearch={() => setShowTaskSearch(true)} />
+      {showTaskSearch && <TaskSearch tasks={nodes.filter(isTaskNode).map(node => ({ id: node.id, label: node.data.label, path: node.data.path }))}
+          onClose={() => setShowTaskSearch(false)} onSelect={id => { setShowTaskSearch(false); handleSidebarClick(id); }} />}
       <ReactFlow
         nodes={nodes} edges={edges}
         onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
