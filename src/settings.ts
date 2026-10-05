@@ -48,7 +48,7 @@ export class TaskGraphSettingTab extends PluginSettingTab {
             control(text.advanced, 'advanced', 'toggle'),
             control(text.autoFit, 'autoFitAfterLayout', 'toggle'),
             control(text.syncHierarchy, 'autoSyncHierarchy', 'toggle'),
-            { name: text.taskNotes },
+            { name: text.taskNotes, render: setting => { setting.setHeading(); setting.nameEl.style.fontWeight = '700'; } },
             control(text.enable, 'taskNotes.enabled', 'toggle'),
             taskNotes(control(text.identification, 'taskNotes.identificationMethod', 'dropdown', { tag: text.tag, property: text.property })),
             taskNotes(control(text.taskTag, 'taskNotes.taskTag', 'text')),
@@ -60,12 +60,11 @@ export class TaskGraphSettingTab extends PluginSettingTab {
             taskNotes(control(text.progress, 'taskNotes.inProgressStatuses', 'text')),
             taskNotes(control(text.finished, 'taskNotes.finishedStatuses', 'text')),
             { name: text.clear, desc: text.clearDesc, action: () => this.confirmClearTaskIndex() },
-            { name: zh ? '已归档画板' : 'Archived boards' },
-            ...this.plugin.settings.boards.filter(board => board.archived).map(board => ({
-                name: board.name,
-                render: (setting: Setting) => addArchivedBoardControls(setting, this.plugin, board.id, () => this.refreshSettings())
-            })),
-            ...(this.plugin.settings.boards.some(board => board.archived) ? [] : [{ name: zh ? '暂无归档画板' : 'No archived boards' }])
+            { name: zh ? '已归档画板' : 'Archived boards', render: setting => {
+                setting.settingEl.empty();
+                setting.settingEl.addClass('spatial-task-graph-archive-setting');
+                this.renderArchivedBoards(setting.settingEl);
+            } }
         ];
     }
 
@@ -204,11 +203,20 @@ export class TaskGraphSettingTab extends PluginSettingTab {
         new Setting(containerEl).setName(text.clearIndex).setDesc(text.clearIndexDesc)
             .addButton(button => button.setButtonText(text.clearIndex).setWarning()
                 .onClick(() => this.confirmClearTaskIndex()));
-        new Setting(containerEl).setName(zh ? '已归档画板' : 'Archived boards').setHeading();
+        this.renderArchivedBoards(containerEl);
+    }
+
+    private renderArchivedBoards(containerEl: HTMLElement): void {
+        const zh = isSimplifiedChinese();
+        const archivedSection = containerEl.createEl('details', { cls: 'spatial-task-graph-archived-boards' });
+        const archivedSummary = archivedSection.createEl('summary', { text: `🗄️ ${zh ? '已归档画板' : 'Archived boards'}` });
+        archivedSummary.setAttribute('aria-label', zh ? '显示已归档画板' : 'Show archived boards');
         const archived = this.plugin.settings.boards.filter(board => board.archived);
-        if (!archived.length) new Setting(containerEl).setName(zh ? '暂无归档画板' : 'No archived boards');
+        if (!archived.length) {
+            archivedSection.createDiv({ cls: 'setting-item-description', text: zh ? '暂无归档画板' : 'No archived boards' });
+        }
         for (const board of archived) {
-            addArchivedBoardControls(new Setting(containerEl).setName(board.name), this.plugin, board.id, () => this.refreshSettings());
+            addArchivedBoardControls(new Setting(archivedSection).setName(board.name), this.plugin, board.id, () => this.refreshSettings());
         }
     }
 }

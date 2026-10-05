@@ -3,7 +3,10 @@ import type { Edge, Viewport } from 'reactflow';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
 import { TaskGraphSettingTab } from './settings';
 import { archiveBoard, restoreBoard, deleteArchivedBoard } from './boardArchive';
-import { FilterCondition, getFilterConditions, matchesFilterConditions } from './taskFilters';
+import { checklistRanges } from './checklistRanges';
+import { SaveQueue } from './saveQueue';
+import { taskListsEqual } from './taskCacheEquality';
+import { FilterCondition, getFilterConditions, createFilterMatcher } from './taskFilters';
 import { frontmatterTags, matchesTaskNotesIdentifier, parseTaskNotesFrontmatter, taskNotesStatusForCategory, TaskNotesSettings, TaskNotesStatusCategory } from './tasknotesAdapter';
 
 export interface TextNodeData { id: string; text: string; x: number; y: number; }
@@ -75,6 +78,7 @@ export default class TaskGraphPlugin extends Plugin {
     
     taskCache: Map<string, TaskCacheItem[]> = new Map();
     isCacheInitialized: boolean = false;
+    private settingsWriter = new SaveQueue(() => this.saveData(this.settings));
 
 	debouncedRefresh = debounce(() => {
 		if (this.viewRefresh) this.viewRefresh();
@@ -157,10 +161,9 @@ export default class TaskGraphPlugin extends Plugin {
 	}
 
     async initializeCache(forceFullScan = false) {
-        const cachedPaths = (this.app.metadataCache as unknown as CachedFilesMetadataCache).getCachedFiles();
         const indexedPaths = this.settings.boards.flatMap(board => board.data.taskPaths || []);
         const shouldUseIndex = !forceFullScan && this.settings.boards.every(board => Array.isArray(board.data.taskPaths));
-        const paths = shouldUseIndex ? [...new Set(indexedPaths)] : cachedPaths;
+        const paths = shouldUseIndex ? [...new Set(indexedPaths)] : (this.app.metadataCache as unknown as CachedFilesMetadataCache).getCachedFiles();
         const files = paths
             .filter(path => path.endsWith('.md'))
             .map(path => this.app.vault.getAbstractFileByPath(path))
@@ -191,9 +194,7 @@ export default class TaskGraphPlugin extends Plugin {
         const hasTaskNotesCandidate = Boolean(this.settings.taskNotes.enabled && cache?.frontmatter && matchesTaskNotesIdentifier(cache.frontmatter, this.settings.taskNotes));
         const hasChecklistCandidate = Boolean(cache?.listItems?.some(item => Boolean(item?.task)));
         if (!hasTaskNotesCandidate && !hasChecklistCandidate) {
-            this.taskCache.set(file.path, []);
-            this.trackTaskPath(file.path, false);
-            if (triggerRefresh && this.isCacheInitialized) this.debouncedRefresh();
+            this.storeFileTasks(file.path, [], triggerRefresh);
             return;
         }
         const content = await this.app.vault.cachedRead(file);
@@ -216,43 +217,23 @@ export default class TaskGraphPlugin extends Plugin {
         }
 
         if (!cache?.listItems || tasks.some(task => task.source === 'tasknotes')) {
-            this.taskCache.set(file.path, tasks);
-            this.trackTaskPath(file.path, tasks.length > 0);
-            if (triggerRefresh && this.isCacheInitialized) this.debouncedRefresh();
+            this.storeFileTasks(file.path, tasks, triggerRefresh);
             return;
         }
 
 
+        const ranges = checklistRanges(cache.listItems, lines);
+        const usedIds = new Set<string>();
+        const duplicateCounts = new Map<string, number>();
         for (let i = 0; i < cache.listItems.length; i++) {
             const item = cache.listItems[i];
             if (!item || !item.task) continue;
             
-            const startLine = item.position.start.line;
-            let endLine = item.position.end.line;
-
-            for (let j = i + 1; j < cache.listItems.length; j++) {
-                const nextItem = cache.listItems[j];
-                if (nextItem && nextItem.position.start.line <= endLine) {
-                    endLine = nextItem.position.start.line - 1;
-                    break;
-                } else {
-                    break; 
-                }
-            }
-
+            const range = ranges[i];
+            if (!range) continue;
+            const { startLine, endLine, notesStartLine, notesEndLine } = range;
             const rawLineText = lines[startLine];
             if (rawLineText === undefined) continue;
-
-            const baseIndent = (rawLineText.match(/^\s*/) || [''])[0].length;
-            const childLine = cache.listItems.slice(i + 1).find(nextItem => {
-                if (!nextItem?.task) return false;
-                const nextLine = nextItem.position.start.line;
-                if (nextLine > endLine) return false;
-                const nextText = lines[nextLine] || '';
-                return (nextText.match(/^\s*/) || [''])[0].length > baseIndent;
-            })?.position.start.line;
-            const notesStartLine = startLine + 1;
-            const notesEndLine = childLine !== undefined ? childLine - 1 : endLine;
 
             let notesText = "";
             if (notesEndLine >= notesStartLine) {
@@ -281,13 +262,13 @@ export default class TaskGraphPlugin extends Plugin {
                 const textHash = cleanText.substring(0, 30).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
                 stableId = `${file.path}::#${textHash}`; 
                 
-                let counter = 0;
-                while(tasks.some(t => t.id === stableId)) { 
-                    counter++; 
-                    stableId = `${file.path}::#${textHash}_${counter}`; 
-                }
+                const baseId = stableId;
+                let counter = duplicateCounts.get(baseId) || 0;
+                while (usedIds.has(stableId)) { counter++; stableId = `${baseId}_${counter}`; }
+                duplicateCounts.set(baseId, counter);
             }
 
+            usedIds.add(stableId);
             const displayText = rawLineText.replace(/- \[[x\s/bc!-]\]\s/, '').replace(/\s\^([a-zA-Z0-9-]+)$/, '').trim();
 
             tasks.push({
@@ -309,11 +290,20 @@ export default class TaskGraphPlugin extends Plugin {
             });
         }
 
-        this.taskCache.set(file.path, tasks);
-        this.trackTaskPath(file.path, tasks.length > 0);
-        if (triggerRefresh && this.isCacheInitialized) {
-            this.debouncedRefresh();
+        this.storeFileTasks(file.path, tasks, triggerRefresh);
+    }
+
+    private storeFileTasks(path: string, tasks: TaskCacheItem[], triggerRefresh: boolean) {
+        const previous = this.taskCache.get(path);
+        if ((!previous || previous.length === 0) && tasks.length === 0) {
+            this.trackTaskPath(path, false);
+            return;
         }
+        if (taskListsEqual(previous, tasks)) return;
+        if (tasks.length) this.taskCache.set(path, tasks);
+        else this.taskCache.delete(path);
+        this.trackTaskPath(path, tasks.length > 0);
+        if (triggerRefresh && this.isCacheInitialized) this.debouncedRefresh();
     }
 
     private trackTaskPath(path: string, hasTasks: boolean) {
@@ -353,7 +343,7 @@ export default class TaskGraphPlugin extends Plugin {
 	}
 
 	async saveSettings() {
-        await this.saveData(this.settings);
+        await this.settingsWriter.request();
 	}
 
     async archiveBoard(id: string): Promise<string> {
@@ -361,6 +351,7 @@ export default class TaskGraphPlugin extends Plugin {
         this.settings.boards = result.boards;
         if (this.settings.lastActiveBoardId === id) this.settings.lastActiveBoardId = result.nextBoardId;
         await this.saveSettings();
+        this.viewRefresh?.();
         return result.nextBoardId;
     }
 
@@ -620,7 +611,7 @@ export default class TaskGraphPlugin extends Plugin {
         if (!board) return [];
 
 		const filters = board.filters;
-        const conditions = getFilterConditions(filters);
+        const matchesConditions = createFilterMatcher(getFilterConditions(filters));
         
 		const connectedTaskIds = new Set<string>();
 		board.data.edges.forEach((e: Edge) => { 
@@ -643,7 +634,7 @@ export default class TaskGraphPlugin extends Plugin {
                 return (isConnected || filters.status.length === 0 || filters.status.includes(task.status));
             };
             const matchesTagFilters = (task: TaskCacheItem) => {
-                if (!matchesFilterConditions(task.rawText, path, conditions)) return false;
+                if (!matchesConditions(task.rawText, path)) return false;
                 return filters.excludeTags.length === 0 || !filters.excludeTags.some(tag => task.rawText.includes(tag));
             };
             const isIncluded = (task: TaskCacheItem, visiting = new Set<string>()): boolean => {
