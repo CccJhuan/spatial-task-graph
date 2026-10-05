@@ -48,7 +48,7 @@ export class TaskGraphSettingTab extends PluginSettingTab {
             control(text.advanced, 'advanced', 'toggle'),
             control(text.autoFit, 'autoFitAfterLayout', 'toggle'),
             control(text.syncHierarchy, 'autoSyncHierarchy', 'toggle'),
-            { name: text.taskNotes, render: setting => { setting.setHeading(); setting.nameEl.style.fontWeight = '700'; } },
+            { name: text.taskNotes, render: setting => { setting.setHeading(); setting.nameEl.addClass('spatial-task-graph-setting-heading'); } },
             control(text.enable, 'taskNotes.enabled', 'toggle'),
             taskNotes(control(text.identification, 'taskNotes.identificationMethod', 'dropdown', { tag: text.tag, property: text.property })),
             taskNotes(control(text.taskTag, 'taskNotes.taskTag', 'text')),

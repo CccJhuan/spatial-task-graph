@@ -87,7 +87,7 @@ input[type="checkbox"].filter-checkbox:checked::after { content: ''; position: a
 .task-filter-value { grid-column: 2; min-width: 0; }
 .task-filter-row input.task-filter-enable { appearance: none; -webkit-appearance: none; width: 20px; height: 20px; margin: 0; padding: 0; border: 1px solid var(--background-modifier-border); border-radius: 4px; background: var(--background-primary); position: relative; cursor: pointer; }
 .task-filter-row input.task-filter-enable:checked { background: var(--interactive-accent); border-color: var(--interactive-accent); }
-.task-filter-row input.task-filter-enable:checked::after { content: ''; position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; transform: none; background: white; mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" d="m5 12 4 4 10-10"/></svg>') center / 16px 16px no-repeat; }
+.task-filter-row input.task-filter-enable:checked::after { content: ''; position: absolute; width: 6px; height: 10px; left: 6px; top: 3px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .task-filter-row button.task-filter-remove { width: 20px; height: 20px; min-width: 20px; padding: 0; display: flex; align-items: center; justify-content: center; font-size: 15px; border-radius: 4px; box-shadow: none; color: var(--text-muted); cursor: pointer; }
 .task-filter-row button.task-filter-remove svg { width: 20px; height: 20px; flex-shrink: 0; }
 .task-filter-row button.task-filter-remove:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
@@ -138,6 +138,7 @@ input[type="checkbox"].filter-checkbox:checked::after { content: ''; position: a
 .connection-actions button.is-active:not(:disabled) { background: var(--interactive-accent); color: var(--text-on-accent); }
 .connection-cancel { color: var(--text-muted); }
 .spatial-task-graph-archive-setting { display: block; }
+.spatial-task-graph-setting-heading { font-weight: 700; }
 .spatial-task-graph-archive-setting .spatial-task-graph-archived-boards { width: 100%; margin-top: 0; }
 .spatial-task-graph-archived-boards { margin-top: 18px; }
 .spatial-task-graph-archived-boards > summary { cursor: pointer; font-weight: 700; font-size: var(--font-ui-medium); color: var(--text-normal); padding: 8px 0; list-style-position: outside; }
