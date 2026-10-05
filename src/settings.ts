@@ -3,6 +3,7 @@ import type { App } from "obsidian";
 import SpatialTaskGraphPlugin from "./main";
 import { isSimplifiedChinese } from "./language";
 import { ClearIndexModal } from "./clearIndexModal";
+import { addArchivedBoardControls } from './archivedBoardSettings';
 
 // Kept local so the plugin can compile against older Obsidian type definitions.
 // Obsidian 1.13+ consumes this shape for declarative settings search/rendering.
@@ -11,6 +12,7 @@ type SettingDefinition = {
     desc?: string;
     visible?: boolean | (() => boolean);
     action?: () => void;
+    render?: (setting: Setting) => void;
     control?: { type: 'toggle' | 'text' | 'dropdown'; key: string; defaultValue?: unknown; options?: Record<string, string> };
 };
 
@@ -57,7 +59,13 @@ export class TaskGraphSettingTab extends PluginSettingTab {
             taskNotes(control(text.backlog, 'taskNotes.backlogStatuses', 'text')),
             taskNotes(control(text.progress, 'taskNotes.inProgressStatuses', 'text')),
             taskNotes(control(text.finished, 'taskNotes.finishedStatuses', 'text')),
-            { name: text.clear, desc: text.clearDesc, action: () => this.confirmClearTaskIndex() }
+            { name: text.clear, desc: text.clearDesc, action: () => this.confirmClearTaskIndex() },
+            { name: zh ? '已归档画板' : 'Archived boards' },
+            ...this.plugin.settings.boards.filter(board => board.archived).map(board => ({
+                name: board.name,
+                render: (setting: Setting) => addArchivedBoardControls(setting, this.plugin, board.id, () => this.refreshSettings())
+            })),
+            ...(this.plugin.settings.boards.some(board => board.archived) ? [] : [{ name: zh ? '暂无归档画板' : 'No archived boards' }])
         ];
     }
 
@@ -91,6 +99,12 @@ export class TaskGraphSettingTab extends PluginSettingTab {
             () => this.plugin.clearTaskIndexAndGeneratedBlockIds(),
             () => { this.clearIndexModal = undefined; });
         this.clearIndexModal.open();
+    }
+
+    private refreshSettings(): void {
+        const update = (this as unknown as { update?: () => void }).update;
+        if (update) update.call(this);
+        else this.display();
     }
 
     display(): void {
@@ -190,5 +204,11 @@ export class TaskGraphSettingTab extends PluginSettingTab {
         new Setting(containerEl).setName(text.clearIndex).setDesc(text.clearIndexDesc)
             .addButton(button => button.setButtonText(text.clearIndex).setWarning()
                 .onClick(() => this.confirmClearTaskIndex()));
+        new Setting(containerEl).setName(zh ? '已归档画板' : 'Archived boards').setHeading();
+        const archived = this.plugin.settings.boards.filter(board => board.archived);
+        if (!archived.length) new Setting(containerEl).setName(zh ? '暂无归档画板' : 'No archived boards');
+        for (const board of archived) {
+            addArchivedBoardControls(new Setting(containerEl).setName(board.name), this.plugin, board.id, () => this.refreshSettings());
+        }
     }
 }

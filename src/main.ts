@@ -2,6 +2,7 @@ import { Plugin, WorkspaceLeaf, TFile, debounce, Notice } from 'obsidian';
 import type { Edge, Viewport } from 'reactflow';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
 import { TaskGraphSettingTab } from './settings';
+import { archiveBoard, restoreBoard, deleteArchivedBoard } from './boardArchive';
 import { FilterCondition, getFilterConditions, matchesFilterConditions } from './taskFilters';
 import { frontmatterTags, matchesTaskNotesIdentifier, parseTaskNotesFrontmatter, taskNotesStatusForCategory, TaskNotesSettings, TaskNotesStatusCategory } from './tasknotesAdapter';
 
@@ -26,6 +27,7 @@ export interface TaskCacheItem {
 }
 
 export interface GraphBoard {
+	archived?: boolean;
 	id: string; name: string;
 	filters: { tags: string[]; excludeTags: string[]; folders: string[]; status: string[]; tagMode?: 'AND' | 'OR'; conditions?: FilterCondition[]; };
 	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; collapsedNodes?: Record<string, boolean>; taskPaths?: string[]; generatedBlockIds?: string[]; }
@@ -341,12 +343,38 @@ export default class TaskGraphPlugin extends Plugin {
 		if (!this.settings.boards || this.settings.boards.length === 0) {
 			this.settings.boards = [DEFAULT_BOARD];
 		}
-
+        const first = this.settings.boards[0];
+        if (first && !this.settings.boards.some(board => !board.archived)) {
+            this.settings.boards = archiveBoard(this.settings.boards, first.id).boards;
+        }
+        const active = this.settings.boards.find(board => board.id === this.settings.lastActiveBoardId && !board.archived)
+            || this.settings.boards.find(board => !board.archived);
+        if (active) this.settings.lastActiveBoardId = active.id;
 	}
 
 	async saveSettings() {
         await this.saveData(this.settings);
 	}
+
+    async archiveBoard(id: string): Promise<string> {
+        const result = archiveBoard(this.settings.boards, id);
+        this.settings.boards = result.boards;
+        if (this.settings.lastActiveBoardId === id) this.settings.lastActiveBoardId = result.nextBoardId;
+        await this.saveSettings();
+        return result.nextBoardId;
+    }
+
+    async restoreBoard(id: string): Promise<void> {
+        this.settings.boards = restoreBoard(this.settings.boards, id);
+        await this.saveSettings();
+        this.viewRefresh?.();
+    }
+
+    async deleteArchivedBoard(id: string): Promise<void> {
+        this.settings.boards = deleteArchivedBoard(this.settings.boards, id);
+        await this.saveSettings();
+        this.viewRefresh?.();
+    }
 
     async updateTaskNotesStatus(path: string, category: TaskNotesStatusCategory) {
         const file = this.app.vault.getAbstractFileByPath(path);

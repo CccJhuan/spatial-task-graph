@@ -335,7 +335,7 @@ interface ControlPanelProps {
     onSwitchBoard: (id: string) => void;
     onAddBoard: () => void;
     onRenameBoard: (name: string) => Promise<void>;
-    onDeleteBoard: (id: string) => Promise<void>;
+    onArchiveBoard: (id: string) => Promise<void>;
     onAutoLayout: () => Promise<void>;
     onSyncRelations: () => Promise<void>;
     onResetView: () => void;
@@ -427,7 +427,7 @@ const AutocompleteInput = ({ value, onChange, options, placeholder }: { value: s
     );
 };
 
-const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRenameBoard, onDeleteBoard, onAutoLayout, onSyncRelations, onResetView, currentBoard, onUpdateFilter, onApplyFilters, onRequestConfirm, allTags, allFolders }: ControlPanelProps) => {
+const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRenameBoard, onArchiveBoard, onAutoLayout, onSyncRelations, onResetView, currentBoard, onUpdateFilter, onApplyFilters, onRequestConfirm, allTags, allFolders }: ControlPanelProps) => {
     const [showFilters, setShowFilters] = React.useState(false);
     const [isRenaming, setIsRenaming] = React.useState(false);
     const [tempName, setTempName] = React.useState('');
@@ -468,10 +468,7 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
 
     const handleSaveName = () => { if (tempName.trim()) void onRenameBoard(tempName); setIsRenaming(false); };
 
-    const handleDelete = () => {
-        if (boards.length <= 1) { new Notice("Cannot delete the only board."); return; }
-        onRequestConfirm(`Delete board "${currentBoard?.name || 'Board'}"?`, () => { void onDeleteBoard(activeBoardId); });
-    };
+    const handleArchive = () => { void onArchiveBoard(activeBoardId); };
 
     const handleResetClick = () => { onResetView(); };
 
@@ -483,7 +480,7 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     const btnStyle = { background: 'var(--background-secondary)', border: '1px solid var(--background-modifier-border)', color: 'var(--text-normal)', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', fontWeight: '500' };
     const activeBtnStyle = { ...btnStyle, background: 'var(--interactive-accent)', color: 'white', border: 'none', boxShadow: '0 2px 8px rgba(var(--interactive-accent-rgb), 0.3)' };
 
-    return (<Panel position="top-right" className={showFilters ? "task-control-panel filters-open" : "task-control-panel"} style={{ position: 'absolute', top: '20px', right: '20px', background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', width: '280px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', pointerEvents: 'all', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...sharedInputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><PanelDropdown className="task-board-dropdown" label="Board" value={activeBoardId} onChange={onSwitchBoard} options={boards.map(board => ({ value: board.id, label: board.name }))} /><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={() => void onAddBoard()} title="New">+</button></>)}</div><div className="task-control-actions"><div className="task-control-actions-inner"><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}><button disabled={actionStates.layout === "running"} style={actionStates.layout === "done" ? activeBtnStyle : btnStyle} onClick={() => void runAction("layout", onAutoLayout)}>{actionLabel("layout", "⚡ Layout")}</button><button disabled={actionStates.sync === "running"} style={actionStates.sync === "done" ? activeBtnStyle : btnStyle} onClick={() => void runAction("sync", onSyncRelations)}>{actionLabel("sync", "🔗 Sync")}</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleResetClick}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div></div></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}>
+    return (<Panel position="top-right" className={showFilters ? "task-control-panel filters-open" : "task-control-panel"} style={{ position: 'absolute', top: '20px', right: '20px', background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', width: '280px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', pointerEvents: 'all', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...sharedInputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><PanelDropdown className="task-board-dropdown" label="Board" value={activeBoardId} onChange={onSwitchBoard} options={boards.map(board => ({ value: board.id, label: board.name }))} /><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={() => void onAddBoard()} title="New">+</button></>)}</div><div className="task-control-actions"><div className="task-control-actions-inner"><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}><button disabled={actionStates.layout === "running"} style={actionStates.layout === "done" ? activeBtnStyle : btnStyle} onClick={() => void runAction("layout", onAutoLayout)}>{actionLabel("layout", "⚡ Layout")}</button><button disabled={actionStates.sync === "running"} style={actionStates.sync === "done" ? activeBtnStyle : btnStyle} onClick={() => void runAction("sync", onSyncRelations)}>{actionLabel("sync", "🔗 Sync")}</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleResetClick}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleArchive}>{zh ? '归档' : 'Archive'}</button></div></div></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}>
 
         <div className="task-filter-conditions">
             {conditions.map((condition, index) => (
@@ -660,7 +657,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   const connectionStartRef = React.useRef<Partial<OnConnectStartParams>>({});
   const connectionMadeRef = React.useRef(false);
 
-  const activeBoard = plugin.settings.boards.find(b => b.id === activeBoardId) || plugin.settings.boards[0];
+  const activeBoard = plugin.settings.boards.find(b => b.id === activeBoardId && !b.archived) || plugin.settings.boards.find(b => !b.archived);
 
   const handleToggleCollapse = React.useCallback(async (id: string, collapsed: boolean) => {
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
@@ -1083,15 +1080,9 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
 
   const handleAddBoard = () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'], tagMode: 'OR' }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [], taskPaths: [...plugin.taskCache.keys()] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
 
-  const handleDeleteBoard = async (id: string) => {
-      const newBoards = plugin.settings.boards.filter(b => b.id !== id);
-      plugin.settings.boards = newBoards;
-      const nextBoard = newBoards[0];
-      if (nextBoard) {
-          setActiveBoardId(nextBoard.id);
-          plugin.settings.lastActiveBoardId = nextBoard.id;
-          await plugin.saveSettings();
-      }
+  const handleArchiveBoard = async (id: string) => {
+      const nextId = await plugin.archiveBoard(id);
+      handleSwitchBoard(nextId);
   };
 
   const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
@@ -1391,7 +1382,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       >
         <Background gap={24} color="rgba(150,150,150,0.1)" size={1.5} />
 
-        <ControlPanel boards={plugin.settings.boards} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onDeleteBoard={handleDeleteBoard} onAutoLayout={handleAutoLayout} onSyncRelations={handleSyncRelations} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} onApplyFilters={handleApplyFilters} onRequestConfirm={(msg: string, action: () => void) => setConfirmReq({ message: msg, action })} allTags={allTags} allFolders={allFolders} />
+        <ControlPanel boards={plugin.settings.boards.filter(board => !board.archived)} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onArchiveBoard={handleArchiveBoard} onAutoLayout={handleAutoLayout} onSyncRelations={handleSyncRelations} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} onApplyFilters={handleApplyFilters} onRequestConfirm={(msg: string, action: () => void) => setConfirmReq({ message: msg, action })} allTags={allTags} allFolders={allFolders} />
         <GraphToolbar />
 
         <Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '70px', zIndex: 99, pointerEvents: 'none' }}>
