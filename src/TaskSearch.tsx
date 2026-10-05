@@ -3,8 +3,8 @@ import { isSimplifiedChinese } from './language';
 
 interface SearchTask { id: string; label: string; path: string; }
 
-export function TaskSearch({ tasks, onSelect, onClose }: {
-    tasks: SearchTask[]; onSelect: (id: string) => void; onClose: () => void;
+export function TaskSearch({ tasks, onSelect, onClose, mode = 'focus' }: {
+    tasks: SearchTask[]; onSelect: (id: string) => void; onClose: () => void; mode?: 'focus' | 'connect';
 }) {
     const zh = isSimplifiedChinese();
     const [query, setQuery] = React.useState('');
@@ -18,7 +18,7 @@ export function TaskSearch({ tasks, onSelect, onClose }: {
     const listId = React.useId();
     const select = (index: number) => { const task = results[index]; if (task) onSelect(task.id); };
     return <div className="edit-overlay" onMouseDown={event => { event.stopPropagation(); if (event.target === event.currentTarget) onClose(); }}>
-        <div className="edit-modal task-search-modal" role="dialog" aria-modal="true" aria-label={zh ? '搜索任务' : 'Search tasks'}
+        <div className="edit-modal task-search-modal" role="dialog" aria-modal="true" aria-label={mode === 'connect' ? (zh ? '搜索并连接任务' : 'Search and connect task') : (zh ? '搜索任务' : 'Search tasks')}
             onKeyDown={event => {
                 event.stopPropagation();
                 if (event.key === 'Escape') { event.preventDefault(); onClose(); }
@@ -38,7 +38,9 @@ export function TaskSearch({ tasks, onSelect, onClose }: {
                 </div>)}
             </div>
             {!results.length && <div>{zh ? '没有匹配的任务' : 'No matching tasks'}</div>}
-            <div className="task-search-hint">{zh ? '↑↓ 选择 · Enter 定位 · Esc 关闭' : '↑↓ Select · Enter Focus · Esc Close'}</div>
+            <div className="task-search-hint">{mode === 'connect'
+                ? (zh ? '↑↓ 选择 · Enter 连接 · Esc 关闭' : '↑↓ Select · Enter Connect · Esc Close')
+                : (zh ? '↑↓ 选择 · Enter 定位 · Esc 关闭' : '↑↓ Select · Enter Focus · Esc Close')}</div>
         </div>
     </div>;
 }

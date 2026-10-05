@@ -27,6 +27,8 @@ import { isSimplifiedChinese } from './language';
 import { PanelDropdown } from './PanelDropdown';
 import { TaskSearch } from './TaskSearch';
 import { openTaskLocation } from './taskNavigation';
+import { hiddenDescendants, compactDescendants } from './graphTraversal';
+import { ConnectionActions } from './ConnectionActions';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
@@ -112,7 +114,7 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isCo
                 />
             </div>
             <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '13px', lineHeight: '1.5', color: 'var(--text-normal)', fontWeight: '500', wordBreak: 'break-word', whiteSpace: 'pre-wrap', opacity: (data.status === 'x' ? 0.6 : 1), textDecoration: (data.status === 'x' ? 'line-through' : 'none') }}>
+                <div style={{ fontSize: '13px', lineHeight: '1.5', color: 'var(--text-normal)', fontWeight: '700', wordBreak: 'break-word', whiteSpace: 'pre-wrap', opacity: (data.status === 'x' ? 0.6 : 1), textDecoration: (data.status === 'x' ? 'line-through' : 'none') }}>
                     {cleanText || data.label}
                 </div>
 
@@ -277,7 +279,7 @@ const ConfirmModal = ({ message, onConfirm, onClose }: { message: string, onConf
     );
 };
 
-const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange, onSearch }: { nodes: AppNode[], onNodeCenter: (nodeId: string) => void, onStatusChange: (id: string, status: string) => Promise<void>, onSearch: () => void }) => {
+const TaskSidebar = React.memo(({ nodes, onNodeCenter, onStatusChange, onSearch }: { nodes: AppNode[], onNodeCenter: (nodeId: string) => void, onStatusChange: (id: string, status: string) => Promise<void>, onSearch: () => void }) => {
     const sidebarRef = React.useRef<HTMLDivElement>(null);
     const [availableHeight, setAvailableHeight] = React.useState(600);
     React.useLayoutEffect(() => {
@@ -319,7 +321,14 @@ const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange, onSearch }: { nodes:
         </div>
     );
     return (<div ref={sidebarRef} className="task-sidebar" onMouseDown={stopProp} onWheel={stopProp} onContextMenu={stopProp}><div style={{ marginBottom: '16px', fontSize: '16px', lineHeight: '24px', flexShrink: 0, fontWeight: '800', letterSpacing: '-0.5px', color: 'var(--text-normal)'  , display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>My tasks<button type="button" className="task-sidebar-search" aria-label={isSimplifiedChinese() ? "搜索任务" : "Search tasks"} onClick={onSearch}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg></button></div>{renderList('In progress', inProgress, STATUS_COLORS['in_progress'], 'in-progress', 'in_progress')}{renderList('Pending', pending, STATUS_COLORS['pending'], 'pending', 'pending')}{renderList('Backlog', backlog, STATUS_COLORS['backlog'], 'backlog', 'backlog')}</div>);
-};
+}, (previous, next) => previous.onNodeCenter === next.onNodeCenter
+    && previous.onStatusChange === next.onStatusChange && previous.onSearch === next.onSearch
+    && previous.nodes.length === next.nodes.length && previous.nodes.every((node, index) => {
+        const current = next.nodes[index];
+        if (!current || node.id !== current.id || node.type !== current.type) return false;
+        return !isTaskNode(node) || (isTaskNode(current)
+            && node.data.label === current.data.label && node.data.customStatus === current.data.customStatus);
+    }));
 
 const GraphToolbar = () => {
     const { zoomIn, zoomOut, fitView } = useReactFlow();
@@ -525,7 +534,7 @@ const HelpPanel = ({ onClose }: { onClose: () => void }) => {
             sections: [
                 { heading: '🎯 Tasks & connections', items: [
                     'Link: Drag from a node\'s handle to another to create a dependency.',
-                    'Sub-task: Drag a connection to empty space to quickly create a new linked task.',
+                    'Drag a connection into empty space, then drop on the search icon to connect a task or the plus icon to create one.',
                     'Status: Click the checkbox to toggle completion, or Right-click a task for more status options.',
                     'Delete link: Right-click a connection line to remove it.'
                 ]},
@@ -550,7 +559,7 @@ const HelpPanel = ({ onClose }: { onClose: () => void }) => {
             sections: [
                 { heading: '🎯 任务与连线', items: [
                     '建立依赖：拖拽节点两侧的圆点进行连线。',
-                    '快捷新建：将连线拖拽至空白处，直接创建关联子任务。',
+                    '拖线到空白处：拖到放大镜连接已有任务，拖到加号创建子任务。',
                     '状态流转：点击复选框切换完成状态；右键点击节点选择更多状态。',
                     '取消连线：右键点击连线即可删除。'
                 ]},
@@ -616,6 +625,11 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   React.useEffect(() => () => boardSwitchTimers.current.forEach(timer => window.clearTimeout(timer)), []);
 
   const [editTarget, setEditTarget] = React.useState<{id: string, text: string, path: string, line: number, endLine: number, source: 'checklist' | 'tasknotes'} | null>(null);
+  const canvasRef = React.useRef<HTMLDivElement>(null);
+  const [connectionChoices, setConnectionChoices] = React.useState<{ sourceId: string; x: number; y: number } | null>(null);
+  const connectionChoicesRef = React.useRef<typeof connectionChoices>(null);
+  const [connectionActiveAction, setConnectionActiveAction] = React.useState<'search' | 'cancel' | 'create' | null>(null);
+  const [searchConnectionSource, setSearchConnectionSource] = React.useState<string | null>(null);
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
 
   const [allTags, setAllTags] = React.useState<string[]>([]);
@@ -635,6 +649,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
               && (focusedHere || plugin.app.workspace.getActiveViewOfType(TaskGraphView) === view)) {
               event.preventDefault();
               event.stopImmediatePropagation();
+              setSearchConnectionSource(null);
               setShowTaskSearch(true);
           }
       };
@@ -668,7 +683,9 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   }, [plugin, activeBoardId]);
 
   React.useEffect(() => {
-      plugin.viewRefresh = () => setRefreshKey(prev => prev + 1);
+      const refresh = () => setRefreshKey(prev => prev + 1);
+      plugin.viewRefresh = refresh;
+      return () => { if (plugin.viewRefresh === refresh) plugin.viewRefresh = undefined; };
   }, [plugin]);
 
   React.useEffect(() => {
@@ -699,44 +716,17 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       const savedCollapsedNodes = boardConfig?.data.collapsedNodes || {};
       const taskById = new Map(tasks.map(task => [task.id, task]));
       const childrenById: Record<string, string[]> = {};
-      const parentsById: Record<string, string[]> = {};
       for (const edge of savedEdges) {
           if (taskById.has(edge.source) && taskById.has(edge.target)) {
               (childrenById[edge.source] ||= []).push(edge.target);
-              (parentsById[edge.target] ||= []).push(edge.source);
           }
       }
-      const getCompactChildren = (id: string): CompactTaskRow[] => {
-          const rows: CompactTaskRow[] = [];
-          const visit = (parentId: string, depth: number, path: Set<string>) => {
-              for (const childId of childrenById[parentId] || []) {
-                  if (path.has(childId)) continue;
-                  const task = taskById.get(childId);
-                  if (!task) continue;
-                  rows.push({ task, depth, onToggle: () => handleToggleTask(task.id, task.status, task.path, task.line, task.source), onOpenFile: () => { void openTaskLocation(plugin.app, task); } });
-                  const nextPath = new Set(path); nextPath.add(childId);
-                  visit(childId, depth + 1, nextPath);
-              }
-          };
-          visit(id, 1, new Set([id]));
-          return rows;
-      };
-
-      const collapsedIds = new Set<string>();
-      Object.entries(savedCollapsedNodes).forEach(([id, collapsed]) => { if (collapsed) collapsedIds.add(id); });
-      const hiddenByCollapse = (id: string) => {
-          const seen = new Set<string>();
-          const walk = (parentIds: string[]): boolean => {
-              for (const parentId of parentIds) {
-                  if (collapsedIds.has(parentId)) return true;
-                  if (seen.has(parentId)) continue;
-                  seen.add(parentId);
-                  if (walk(parentsById[parentId] || [])) return true;
-              }
-              return false;
-          };
-          return walk(parentsById[id] || []);
-      };
+      const collapsedIds = new Set(Object.entries(savedCollapsedNodes).filter(([, collapsed]) => collapsed).map(([id]) => id));
+      const hiddenIds = hiddenDescendants(childrenById, collapsedIds);
+      const getCompactChildren = (id: string): CompactTaskRow[] => compactDescendants(childrenById, id).flatMap(({ id: childId, depth }) => {
+          const task = taskById.get(childId);
+          return task ? [{ task, depth, onToggle: () => handleToggleTask(task.id, task.status, task.path, task.line, task.source), onOpenFile: () => { void openTaskLocation(plugin.app, task); } }] : [];
+      });
 
       const taskNodes: Node<TaskNodeData, 'task'>[] = tasks.map((t, index) => {
         const posX = savedLayout[t.id]?.x ?? ((index % 3) * 320);
@@ -745,14 +735,14 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
         if (t.status === 'x') finalCustomStatus = 'finished';
 
         return {
-            id: t.id, type: 'task', hidden: hiddenByCollapse(t.id), position: { x: posX, y: posY },
+            id: t.id, type: 'task', hidden: hiddenIds.has(t.id), position: { x: posX, y: posY },
             data: {
                 id: t.id, label: t.text, notes: t.notes, status: t.status, file: t.file, path: t.path, line: t.line, endLine: t.endLine,
                 customStatus: t.source === 'tasknotes' ? t.statusCategory : finalCustomStatus,
                 source: t.source, rawStatus: t.rawStatus,
                 hasChildren: (childrenById[t.id] || []).length > 0,
                 isCollapsed: !!savedCollapsedNodes[t.id],
-                compactChildren: getCompactChildren(t.id),
+                compactChildren: savedCollapsedNodes[t.id] && !hiddenIds.has(t.id) ? getCompactChildren(t.id) : [],
                 onToggleCollapse: handleToggleCollapse,
                 onSaveNotes: handleSaveTaskNotes,
                 onEdit: handleEditTask, onToggleStatus: handleToggleTask,
@@ -791,7 +781,86 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
     }
   }, [plugin, activeBoardId, refreshKey, reactFlowInstance]);
 
+  const placeConnectionChoices = React.useCallback((sourceId: string, clientX: number, clientY: number) => {
+      const bounds = canvasRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const choices = { sourceId,
+          x: Math.max(8, Math.min(bounds.width - 52, clientX - bounds.left + 56)),
+          y: Math.max(8, Math.min(bounds.height - 104, clientY - bounds.top - 50)) };
+      connectionChoicesRef.current = choices;
+      setConnectionChoices(choices);
+  }, []);
+
+  const chooseConnectionAction = React.useCallback((action: 'search' | 'cancel' | 'create') => {
+      const sourceId = connectionChoicesRef.current?.sourceId;
+      if (action === 'cancel') {
+          connectionChoicesRef.current = null;
+          setConnectionChoices(null);
+          setConnectionActiveAction(null);
+          return;
+      }
+      const source = nodes.find(node => node.id === sourceId);
+      if (!source || !isTaskNode(source)) return;
+      connectionChoicesRef.current = null;
+      setConnectionChoices(null);
+      if (action === 'search') {
+          setSearchConnectionSource(source.id);
+          setShowTaskSearch(true);
+      } else if (source.data.source === 'checklist') {
+          setCreateTarget({ sourceNodeId: source.id, sourcePath: source.data.path });
+      }
+  }, [nodes]);
+
+  React.useEffect(() => {
+      if (!isConnecting || connectionStartRef.current.handleType !== 'source') return;
+      const sourceId = connectionStartRef.current.nodeId;
+      if (!sourceId || !nodes.some(node => node.id === sourceId && isTaskNode(node))) return;
+      const doc = view.containerEl.ownerDocument;
+      const trackPointer = (event: MouseEvent | TouchEvent) => {
+          const point = 'touches' in event ? event.touches[0] : event;
+          if (!point) return;
+          const target = doc.elementFromPoint(point.clientX, point.clientY);
+          if (target?.closest('.react-flow__node')) {
+              setConnectionActiveAction(null);
+              return;
+          }
+          const bounds = canvasRef.current?.getBoundingClientRect();
+          if (!bounds || !canvasRef.current?.contains(target)) { setConnectionActiveAction(null); return; }
+          if (!connectionChoicesRef.current) placeConnectionChoices(sourceId, point.clientX, point.clientY);
+          const choices = connectionChoicesRef.current;
+          if (choices) {
+              const relativeY = point.clientY - bounds.top - choices.y;
+              setConnectionActiveAction(relativeY < 52 ? 'search' : relativeY < 104 ? 'cancel' : 'create');
+          }
+      };
+      doc.addEventListener('mousemove', trackPointer);
+      doc.addEventListener('touchmove', trackPointer);
+      return () => {
+          doc.removeEventListener('mousemove', trackPointer);
+          doc.removeEventListener('touchmove', trackPointer);
+      };
+  }, [isConnecting, nodes, view, placeConnectionChoices]);
+
+  React.useEffect(() => {
+      if (!connectionChoices) return;
+      const doc = view.containerEl.ownerDocument;
+      const dismiss = (event: KeyboardEvent) => {
+          if (event.key === 'Escape') { connectionChoicesRef.current = null; setConnectionChoices(null); }
+      };
+      const outside = (event: PointerEvent) => {
+          if (!isConnecting && !(event.target as Element).closest('.connection-actions')) {
+              connectionChoicesRef.current = null; setConnectionChoices(null);
+          }
+      };
+      doc.addEventListener('keydown', dismiss);
+      doc.addEventListener('pointerdown', outside);
+      return () => { doc.removeEventListener('keydown', dismiss); doc.removeEventListener('pointerdown', outside); };
+  }, [connectionChoices, isConnecting, view]);
+
   const onConnectStart = React.useCallback((event: React.MouseEvent | React.TouchEvent, params: OnConnectStartParams) => {
+      connectionChoicesRef.current = null;
+      setConnectionChoices(null);
+      setConnectionActiveAction(null);
       connectionStartRef.current = params;
       connectionMadeRef.current = false;
       setIsConnecting(true);
@@ -799,20 +868,36 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
 
   const onConnectEnd = React.useCallback((event: MouseEvent | TouchEvent) => {
       setIsConnecting(false);
-      if (connectionMadeRef.current) return;
-      const targetIsPane = (event.target as HTMLElement).classList.contains('react-flow__pane');
-      if (targetIsPane && connectionStartRef.current.nodeId) {
-          const sourceNodeId = connectionStartRef.current.nodeId;
-          const sourceNode = nodes.find(n => n.id === sourceNodeId);
-          if (sourceNode && isTaskNode(sourceNode)) {
-              if (sourceNode.data.path && sourceNode.data.source === 'checklist') {
-                  setCreateTarget({ sourceNodeId, sourcePath: sourceNode.data.path });
-              } else if (sourceNode.data.source === 'tasknotes') {
-                  new Notice('Create tasks in the companion plugin.');
-              }
-          }
+      if (connectionMadeRef.current) { connectionChoicesRef.current = null; setConnectionChoices(null); return; }
+      const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+      if (!point || connectionStartRef.current.handleType !== 'source') return;
+      const target = view.containerEl.ownerDocument.elementFromPoint(point.clientX, point.clientY);
+      const action = target?.closest('[data-connection-action]')?.getAttribute('data-connection-action');
+      if (action === 'cancel') {
+          connectionChoicesRef.current = null;
+          setConnectionChoices(null);
+          setConnectionActiveAction(null);
+          return;
       }
-  }, [nodes]);
+      if (action === 'search' || action === 'create') { chooseConnectionAction(action); return; }
+      const choices = connectionChoicesRef.current;
+      const bounds = canvasRef.current?.getBoundingClientRect();
+      if (choices && bounds && canvasRef.current?.contains(target) && !target?.closest('.react-flow__node')) {
+          const relativeY = point.clientY - bounds.top - choices.y;
+          if (relativeY >= 52 && relativeY < 104) {
+              connectionChoicesRef.current = null;
+              setConnectionChoices(null);
+              setConnectionActiveAction(null);
+          } else {
+              chooseConnectionAction(relativeY < 52 ? 'search' : 'create');
+          }
+          return;
+      }
+      const sourceId = connectionStartRef.current.nodeId;
+      if (target?.classList.contains('react-flow__pane') && sourceId && nodes.some(node => node.id === sourceId && isTaskNode(node))) {
+          if (!connectionChoicesRef.current) placeConnectionChoices(sourceId, point.clientX, point.clientY);
+      } else { connectionChoicesRef.current = null; setConnectionChoices(null); }
+  }, [nodes, view, chooseConnectionAction, placeConnectionChoices]);
 
   const handleToggleTask = async (id: string, currentStatus: string, path: string, line: number, source: 'checklist' | 'tasknotes') => {
       const newStatus = (currentStatus === ' ' || currentStatus === '/') ? 'x' : ' ';
@@ -1069,6 +1154,9 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       boardSwitchTarget.current = id;
       setIsBoardSwitching(true);
       setShowTaskSearch(false);
+      setSearchConnectionSource(null);
+      setConnectionChoices(null);
+      connectionChoicesRef.current = null;
       setPendingFocusId(null);
       const timer = window.setTimeout(() => {
           setActiveBoardId(id);
@@ -1144,8 +1232,8 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       connectedNodeIds.forEach(id => {
           if (!visited.has(id)) {
               const comp: string[] = []; const queue = [id]; visited.add(id);
-              while (queue.length > 0) {
-                  const curr = queue.shift()!; comp.push(curr);
+              for (let cursor = 0; cursor < queue.length; cursor++) {
+                  const curr = queue[cursor]!; comp.push(curr);
                   undirectedAdj[curr]?.forEach(neighbor => { if (!visited.has(neighbor)) { visited.add(neighbor); queue.push(neighbor); } });
               }
               components.push(comp);
@@ -1155,24 +1243,29 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       const layout: Record<string, { x: number; y: number }> = {};
       const COL_WIDTH = 320; const COMPONENT_GAP = 60; const MIN_GAP = 30; const DEFAULT_NODE_HEIGHT = 100;
       const nodeHeightMap: Record<string, number> = {};
-      const zoom = reactFlowInstance?.getZoom() ?? 1;
-
-      nodes.forEach(n => {
-          const el = document.querySelector(`[data-id="${n.id}"]`);
-          if (el) { const rect = el.getBoundingClientRect(); nodeHeightMap[n.id] = rect.height / zoom; } else nodeHeightMap[n.id] = DEFAULT_NODE_HEIGHT;
-      });
+      // React Flow already measures nodes; avoid querying and measuring every DOM card.
+      nodes.forEach(n => { nodeHeightMap[n.id] = n.height || DEFAULT_NODE_HEIGHT; });
 
       const nodeMap = new Map(nodes.map(n => [n.id, n]));
       const getUserOrderRank = (ids: string[]): string[] => { return [...ids].sort((a, b) => { const yA = nodeMap.get(a)?.position?.y ?? 0; const yB = nodeMap.get(b)?.position?.y ?? 0; return yA - yB; }); };
       const componentResults: { comp: string[]; height: number }[] = [];
 
-      components.forEach(comp => {
+      const componentByNode = new Map<string, number>();
+      components.forEach((comp, index) => comp.forEach(id => componentByNode.set(id, index)));
+      const edgesByComponent: Edge[][] = components.map(() => []);
+      effectiveEdges.forEach(edge => {
+          const index = componentByNode.get(edge.source);
+          if (index !== undefined && componentByNode.get(edge.target) === index) edgesByComponent[index]!.push(edge);
+      });
+      components.forEach((comp, componentIndex) => {
+          const compIds = new Set(comp);
+          const compEdges = edgesByComponent[componentIndex] || [];
           const level: Record<string, number> = {};
           comp.forEach(id => { level[id] = 0; });
           let changed = true; let iter = 0;
           while (changed && iter < 200) {
               changed = false; iter++;
-              effectiveEdges.forEach((e: Edge) => { if (level[e.source] !== undefined && level[e.target] !== undefined) { if (level[e.target]! <= level[e.source]!) { level[e.target] = level[e.source]! + 1; changed = true; } } });
+              compEdges.forEach((e: Edge) => { if (level[e.source] !== undefined && level[e.target] !== undefined) { if (level[e.target]! <= level[e.source]!) { level[e.target] = level[e.source]! + 1; changed = true; } } });
           }
 
           const levelGroups: Record<number, string[]> = {};
@@ -1182,7 +1275,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
 
           const posY: Record<string, number> = {};
           const assignedNodes = new Set<string>();
-          const compChildren = (id: string): string[] => { return (directedAdj[id] || []).filter(cid => comp.includes(cid)); };
+          const compChildren = (id: string): string[] => { return (directedAdj[id] || []).filter(cid => compIds.has(cid)); };
           const subtreeHeight: Record<string, number> = {};
 
           const computeSubtreeHeight = (id: string, visitedCalc: Set<string>): number => {
@@ -1221,7 +1314,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
 
           const compInDegree: Record<string, number> = {};
           comp.forEach(id => { compInDegree[id] = 0; });
-          effectiveEdges.forEach((e: Edge) => { if (compInDegree[e.target] !== undefined && comp.includes(e.source)) compInDegree[e.target] = (compInDegree[e.target] ?? 0) + 1; });
+          compEdges.forEach((e: Edge) => { if (compInDegree[e.target] !== undefined && compIds.has(e.source)) compInDegree[e.target] = (compInDegree[e.target] ?? 0) + 1; });
           const roots = comp.filter(id => (compInDegree[id] ?? 0) === 0);
           const sortedRoots = getUserOrderRank(roots);
 
@@ -1270,11 +1363,12 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       if (board) {
           const mergedLayout = { ...board.data.layout }; const updatedTextNodes = board.data.textNodes.map(tn => ({ ...tn }));
           const taskPaths = [...new Set([...(board.data.taskPaths || []), ...nodes.filter(isTaskNode).map(node => node.data.path).filter(Boolean)])];
+          const textNodeIndex = new Map(updatedTextNodes.map((node, index) => [node.id, index]));
           Object.keys(layout).forEach(nodeId => {
-              const node = nodes.find(n => n.id === nodeId); const newPos = layout[nodeId];
+              const node = nodeMap.get(nodeId); const newPos = layout[nodeId];
               if (newPos !== undefined) {
                   if (node?.type === 'task') mergedLayout[nodeId] = newPos;
-                  else if (node?.type === 'text') { const tnIndex = updatedTextNodes.findIndex(tn => tn.id === nodeId); if (tnIndex > -1) { const textNodeToUpdate = updatedTextNodes[tnIndex]; if (textNodeToUpdate !== undefined) { textNodeToUpdate.x = newPos.x; textNodeToUpdate.y = newPos.y; } } }
+                  else if (node?.type === 'text') { const tnIndex = textNodeIndex.get(nodeId) ?? -1; if (tnIndex > -1) { const textNodeToUpdate = updatedTextNodes[tnIndex]; if (textNodeToUpdate !== undefined) { textNodeToUpdate.x = newPos.x; textNodeToUpdate.y = newPos.y; } } }
               }
           });
           await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes, taskPaths });
@@ -1355,11 +1449,28 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       setPendingFocusId(null);
   }, [nodes, pendingFocusId, reactFlowInstance, setNodes]);
 
+  // Keep sidebar actions current without re-rendering its task lists for every drag frame.
+  const sidebarActions = React.useRef({ center: handleSidebarClick, changeStatus: updateNodeStatus });
+  sidebarActions.current = { center: handleSidebarClick, changeStatus: updateNodeStatus };
+  const centerSidebarTask = React.useCallback((id: string) => sidebarActions.current.center(id), []);
+  const changeSidebarStatus = React.useCallback((id: string, status: string) => sidebarActions.current.changeStatus(id, status), []);
+  const openTaskSearch = React.useCallback(() => { setSearchConnectionSource(null); setShowTaskSearch(true); }, []);
+
   return (
-    <div className={`task-graph-container ${isConnecting ? 'is-connecting' : ''} ${isBoardSwitching ? 'is-board-switching' : ''}`} aria-busy={isBoardSwitching} onContextMenu={onPaneContextMenu}>
-      <TaskSidebar nodes={nodes} onNodeCenter={handleSidebarClick} onStatusChange={updateNodeStatus} onSearch={() => setShowTaskSearch(true)} />
-      {showTaskSearch && <TaskSearch tasks={nodes.filter(isTaskNode).map(node => ({ id: node.id, label: node.data.label, path: node.data.path }))}
-          onClose={() => setShowTaskSearch(false)} onSelect={id => { setShowTaskSearch(false); handleSidebarClick(id); }} />}
+    <div ref={canvasRef} className={`task-graph-container ${isConnecting ? 'is-connecting' : ''} ${isBoardSwitching ? 'is-board-switching' : ''}`} aria-busy={isBoardSwitching} onContextMenu={onPaneContextMenu}>
+      <TaskSidebar nodes={nodes} onNodeCenter={centerSidebarTask} onStatusChange={changeSidebarStatus} onSearch={openTaskSearch} />
+      {showTaskSearch && <TaskSearch mode={searchConnectionSource ? 'connect' : 'focus'} tasks={nodes.filter(isTaskNode).filter(node => node.id !== searchConnectionSource && (!searchConnectionSource || !edges.some(edge => edge.source === searchConnectionSource && edge.target === node.id))).map(node => ({ id: node.id, label: node.data.label, path: node.data.path }))}
+          onClose={() => { setShowTaskSearch(false); setSearchConnectionSource(null); }} onSelect={id => {
+              setShowTaskSearch(false);
+              if (searchConnectionSource) {
+                  onConnect({ source: searchConnectionSource, target: id, sourceHandle: null, targetHandle: null });
+                  setSearchConnectionSource(null);
+              } else handleSidebarClick(id);
+          }} />}
+      {connectionChoices && <ConnectionActions x={connectionChoices.x} y={connectionChoices.y}
+          activeAction={isConnecting ? connectionActiveAction : null}
+          canCreate={nodes.some(node => node.id === connectionChoices.sourceId && isTaskNode(node) && node.data.source === 'checklist')}
+          onChoose={chooseConnectionAction} />}
       <ReactFlow
         nodes={nodes} edges={edges}
         onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
