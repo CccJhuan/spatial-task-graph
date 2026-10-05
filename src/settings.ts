@@ -1,6 +1,8 @@
-import { Notice, PluginSettingTab, Setting } from "obsidian";
+import { PluginSettingTab, Setting } from "obsidian";
 import type { App } from "obsidian"; 
-import SpatialTaskGraphPlugin from "./main"; 
+import SpatialTaskGraphPlugin from "./main";
+import { isSimplifiedChinese } from "./language";
+import { ClearIndexModal } from "./clearIndexModal";
 
 // Kept local so the plugin can compile against older Obsidian type definitions.
 // Obsidian 1.13+ consumes this shape for declarative settings search/rendering.
@@ -12,16 +14,9 @@ type SettingDefinition = {
     control?: { type: 'toggle' | 'text' | 'dropdown'; key: string; defaultValue?: unknown; options?: Record<string, string> };
 };
 
-const isSimplifiedChinese = (): boolean => {
-    // Use the browser locale so this remains compatible with the plugin's minimum Obsidian version.
-    const obsidianLocale = window.navigator.language || '';
-    return /^(zh(?:-cn|-hans)?)(?:$|-)/i.test(obsidianLocale);
-};
-
 export class TaskGraphSettingTab extends PluginSettingTab {
     plugin: SpatialTaskGraphPlugin;
-    private declarativeClearArmed = false;
-    private declarativeClearTimer?: number;
+    private clearIndexModal?: ClearIndexModal;
 
     constructor(app: App, plugin: SpatialTaskGraphPlugin) {
         super(app, plugin);
@@ -62,7 +57,7 @@ export class TaskGraphSettingTab extends PluginSettingTab {
             taskNotes(control(text.backlog, 'taskNotes.backlogStatuses', 'text')),
             taskNotes(control(text.progress, 'taskNotes.inProgressStatuses', 'text')),
             taskNotes(control(text.finished, 'taskNotes.finishedStatuses', 'text')),
-            { name: text.clear, desc: text.clearDesc, visible: () => this.plugin.settings.taskNotes.enabled, action: () => this.clearTaskIndexDeclaratively(text.confirm) }
+            { name: text.clear, desc: text.clearDesc, action: () => this.confirmClearTaskIndex() }
         ];
     }
 
@@ -90,17 +85,12 @@ export class TaskGraphSettingTab extends PluginSettingTab {
         (this as unknown as { update?: () => void }).update?.();
     }
 
-    private clearTaskIndexDeclaratively(confirmText: string): void {
-        if (!this.declarativeClearArmed) {
-            this.declarativeClearArmed = true;
-            if (this.declarativeClearTimer !== undefined) window.clearTimeout(this.declarativeClearTimer);
-            this.declarativeClearTimer = window.setTimeout(() => { this.declarativeClearArmed = false; }, 5000);
-            new Notice(confirmText);
-            return;
-        }
-        this.declarativeClearArmed = false;
-        if (this.declarativeClearTimer !== undefined) window.clearTimeout(this.declarativeClearTimer);
-        void this.plugin.clearTaskIndexAndGeneratedBlockIds();
+    private confirmClearTaskIndex(): void {
+        if (this.clearIndexModal) return;
+        this.clearIndexModal = new ClearIndexModal(this.app,
+            () => this.plugin.clearTaskIndexAndGeneratedBlockIds(),
+            () => { this.clearIndexModal = undefined; });
+        this.clearIndexModal.open();
     }
 
     display(): void {
@@ -197,29 +187,8 @@ export class TaskGraphSettingTab extends PluginSettingTab {
         statusSetting(text.backlog, 'backlogStatuses');
         statusSetting(text.inProgress, 'inProgressStatuses');
         statusSetting(text.finished, 'finishedStatuses');
-        let clearArmed = false;
-        let clearTimer: number | undefined;
-        new Setting(taskNotesOptions).setName(text.clearIndex).setDesc(text.clearIndexDesc)
-            .addButton(button => button.setButtonText(text.clearIndex).setWarning().onClick(() => {
-                void (async () => {
-                    if (!clearArmed) {
-                        clearArmed = true;
-                        button.setButtonText(text.clearIndexConfirm);
-                        if (clearTimer !== undefined) window.clearTimeout(clearTimer);
-                        clearTimer = window.setTimeout(() => {
-                            clearArmed = false;
-                            button.setButtonText(text.clearIndex);
-                        }, 5000);
-                        return;
-                    }
-                    clearArmed = false;
-                    if (clearTimer !== undefined) window.clearTimeout(clearTimer);
-                    const removedCount = await this.plugin.clearTaskIndexAndGeneratedBlockIds();
-                    button.setButtonText(text.clearIndexDone.replace('{count}', String(removedCount)));
-                    window.setTimeout(() => {
-                        button.setButtonText(text.clearIndex);
-                    }, 3000);
-                })();
-            }));
+        new Setting(containerEl).setName(text.clearIndex).setDesc(text.clearIndexDesc)
+            .addButton(button => button.setButtonText(text.clearIndex).setWarning()
+                .onClick(() => this.confirmClearTaskIndex()));
     }
 }

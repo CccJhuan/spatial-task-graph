@@ -21,6 +21,7 @@ import ReactFlow, {
 } from 'reactflow';
 
 import TaskGraphPlugin, { GraphBoard, TaskCacheItem } from './main';
+import { isSimplifiedChinese } from './language';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
@@ -487,7 +488,7 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
 };
 
 const HelpPanel = ({ onClose }: { onClose: () => void }) => {
-    const [lang, setLang] = React.useState<'en' | 'zh'>('zh');
+    const [lang, setLang] = React.useState<'en' | 'zh'>(() => isSimplifiedChinese() ? 'zh' : 'en');
 
     const content = {
         en: {
