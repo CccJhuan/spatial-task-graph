@@ -973,14 +973,14 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
               ] as const;
               for (const [status, label, color] of groupStatuses) {
                   menu.addItem(item => {
-                      const title = new DocumentFragment();
-                      const row = title.createEl('span', { cls: 'task-status-menu-label' });
+                      const title = (event.currentTarget as HTMLElement).createEl('span', { cls: 'task-status-menu-label' });
+                      title.detach();
+                      const row = title;
                       const marker = row.createEl('span', { cls: 'task-status-menu-marker' });
                       marker.setCssProps({ '--task-status-color': color });
                       marker.setAttribute('aria-hidden', 'true');
                       row.appendText(`Group · ${label}`);
-                      title.append(row);
-                      item.setTitle(title).onClick(() => {
+                      item.setTitle(title as unknown as DocumentFragment).onClick(() => {
                       void plugin.saveBoardData(activeBoardId, { groups: (plugin.settings.boards.find(board => board.id === activeBoardId)?.data.groups || [])
                           .map(item => item.id === group.id ? { ...item, status, color } : item) }).then(() => setRefreshKey(key => key + 1));
                       });
@@ -1002,15 +1002,15 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
               ['blocked', 'Blocked'], ['finished', 'Finished']
           ] as const;
           for (const [status, label] of statuses) {
-              const title = new DocumentFragment();
-              const row = title.createEl('span', { cls: 'task-status-menu-label' });
+              const title = (event.currentTarget as HTMLElement).createEl('span', { cls: 'task-status-menu-label' });
+              title.detach();
+              const row = title;
               const marker = row.createEl('span', { cls: 'task-status-menu-marker' });
               marker.setCssProps({ '--task-status-color': STATUS_COLORS[status] });
               marker.setAttribute('aria-hidden', 'true');
               row.append(marker);
               row.appendText(label);
-              title.append(row);
-              menu.addItem(item => item.setTitle(title).onClick(() => { void updateNodeStatus(taskId, status); }));
+              menu.addItem(item => item.setTitle(title as unknown as DocumentFragment).onClick(() => { void updateNodeStatus(taskId, status); }));
           }
       } else if (node.type === 'text') {
           menu.addItem((item) => item.setTitle('Delete note').onClick(() => {
