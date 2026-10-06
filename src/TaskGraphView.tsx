@@ -5,7 +5,6 @@ import ReactFlow, {
   Background,
   useNodesState,
   useEdgesState,
-  addEdge,
   Node,
   Connection,
   Edge,
@@ -20,37 +19,25 @@ import ReactFlow, {
   OnConnectStartParams
 } from 'reactflow';
 
-import TaskGraphPlugin, { GraphBoard, TaskCacheItem } from './main';
+import TaskGraphPlugin, { GraphBoard } from './main';
 import { synchronizeHierarchy } from './taskHierarchy';
 import { FilterCondition, getFilterConditions, filterSuggestions } from './taskFilters';
 import { isSimplifiedChinese } from './language';
 import { PanelDropdown } from './PanelDropdown';
 import { TaskSearch } from './TaskSearch';
 import { openTaskLocation } from './taskNavigation';
-import { hiddenDescendants, compactDescendants } from './graphTraversal';
+import { GroupNode } from './GroupNode';
+import { GraphToolbar } from './GraphToolbar';
+import { TaskNode, STATUS_COLORS } from './TaskNode';
+import type { TaskNodeData } from './TaskNode';
+import type { GroupNodeData } from './GroupNode';
+import { useGroupWorkspace } from './useGroupWorkspace';
+import { groupDescendants, groupParents, projectLayoutEdges, anchorGroupLayout } from './groups';
+import { connectGraphObjects } from './groupConnections';
 import { ConnectionActions } from './ConnectionActions';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
-interface TaskNodeData {
-    id: string; label: string; notes: string; status: string; file: string; path: string; line: number; endLine: number; customStatus: string;
-    onEdit: (data: TaskNodeData) => void;
-    source: 'checklist' | 'tasknotes'; rawStatus: string;
-    onToggleStatus: (id: string, status: string, path: string, line: number, source: 'checklist' | 'tasknotes') => Promise<void>;
-    onOpenFile: (path: string) => void;
-    onSaveNotes: (data: TaskNodeData, notes: string) => Promise<void>;
-    hasChildren: boolean;
-    isCollapsed: boolean;
-    compactChildren: CompactTaskRow[];
-    onToggleCollapse: (id: string, collapsed: boolean) => Promise<void>;
-}
-
-interface CompactTaskRow {
-    task: TaskCacheItem;
-    depth: number;
-    onToggle: () => Promise<void>;
-    onOpenFile: () => void;
-}
 
 interface TextNodeData {
     id: string; label: string;
@@ -58,117 +45,13 @@ interface TextNodeData {
 }
 
 // 【终极架构修复】：定义 Data 联合类型，并据此衍生全局 AppNode
-type AppNodeData = TaskNodeData | TextNodeData;
-type AppNode = Node<AppNodeData>;
+export type AppNodeData = TaskNodeData | TextNodeData | GroupNodeData;
+export type AppNode = Node<AppNodeData>;
 
 // 自定义类型守卫，精准指引 TypeScript 识别节点身份
 const isTaskNode = (node: AppNode): node is Node<TaskNodeData, 'task'> => node.type === 'task';
 
 
-const STATUS_COLORS = { 'in_progress': '#34c759', 'pending': '#ff9500', 'finished': '#af52de', 'blocked': '#ff3b30', 'backlog': '#8e8e93', 'default': 'var(--text-muted)' };
-const extractTags = (text: string) => { if (!text) return { tags: [], cleanText: '' }; const tagRegex = /#[\w\u4e00-\u9fa5-]+(\/[\w\u4e00-\u9fa5-]+)*/g; const tags = text.match(tagRegex) || []; const cleanText = text.replace(tagRegex, '').trim(); return { tags, cleanText }; };
-
-const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isConnectable: boolean }) => {
-  const { tags, cleanText } = extractTags(data.label);
-  const statusColor = STATUS_COLORS[data.customStatus as keyof typeof STATUS_COLORS] || STATUS_COLORS['default'];
-
-  const [isExpanded, setIsExpanded] = React.useState(false);
-  const [isEditingNotes, setIsEditingNotes] = React.useState(false);
-  const [noteDraft, setNoteDraft] = React.useState(data.notes || '');
-  const compactRows = data.isCollapsed ? data.compactChildren : [];
-
-  React.useEffect(() => {
-    if (!isEditingNotes) setNoteDraft(data.notes || '');
-  }, [data.notes, isEditingNotes]);
-
-  const saveNotes = async () => {
-    if (noteDraft !== data.notes) await data.onSaveNotes(data, noteDraft);
-    setIsEditingNotes(false);
-  };
-
-  return (
-    <div className="task-node-wrapper">
-      <Handle type="target" position={Position.Left} isConnectable={isConnectable} className="custom-handle" style={{ left: '-20px', width: '40px', height: '40px', top: '50%', transform: 'translateY(-50%)' }} />
-      <div style={{ height: '6px', width: '100%', background: statusColor, opacity: 0.8, flexShrink: 0 }}></div>
-      <div style={{ padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
-            <span style={{ fontSize: '10px', fontWeight: '600', color: statusColor, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{data.source === 'tasknotes' && data.rawStatus.trim() ? data.rawStatus : (data.customStatus === 'default' ? 'Task' : data.customStatus.replace('_', ' '))}</span>
-            <div className="edit-btn" onClick={(e) => { e.stopPropagation(); data.onEdit(data); }} title="Edit task">✎</div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-            <div
-                className="nodrag"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                    e.stopPropagation();
-                    void data.onToggleStatus(data.id, data.status, data.path, data.line, data.source);
-                }}
-                style={{ display: 'flex', alignItems: 'center', marginTop: '3px', cursor: 'pointer' }}
-            >
-                <input
-                    type="checkbox"
-                    className="custom-checkbox"
-                    checked={data.status === 'x'}
-                    readOnly
-                    style={{ pointerEvents: 'none', margin: 0 }}
-                />
-            </div>
-            <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '13px', lineHeight: '1.5', color: 'var(--text-normal)', fontWeight: '700', wordBreak: 'break-word', whiteSpace: 'pre-wrap', opacity: (data.status === 'x' ? 0.6 : 1), textDecoration: (data.status === 'x' ? 'line-through' : 'none') }}>
-                    {cleanText || data.label}
-                </div>
-
-                <div
-                        onClick={(e) => { e.stopPropagation(); const nextExpanded = !isExpanded; setIsExpanded(nextExpanded); setIsEditingNotes(nextExpanded); }}
-                        onMouseDown={e => e.stopPropagation()}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '6px', fontSize: '11px', color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none', borderRadius: '4px', padding: '2px 4px', marginLeft: '-4px' }}
-                    >
-                        <span style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', display: 'inline-block' }}>▶</span>
-                        <span>Notes</span>
-                    </div>
-
-                {isExpanded && (
-                    <textarea
-                        className="nodrag"
-                        value={noteDraft}
-                        placeholder="Write a note..."
-                        onChange={e => { setNoteDraft(e.target.value); setIsEditingNotes(true); }}
-                        onFocus={() => setIsEditingNotes(true)}
-                        onBlur={() => { void saveNotes(); }}
-                        onMouseDown={e => e.stopPropagation()}
-                        onKeyDown={e => {
-                            e.stopPropagation();
-                            if (e.key === 'Escape') { e.preventDefault(); void saveNotes(); }
-                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void saveNotes(); }
-                        }}
-                        autoFocus={isEditingNotes}
-                        rows={Math.max(2, noteDraft.split('\n').length)}
-                        style={{ marginTop: '6px', width: '100%', minHeight: '42px', resize: 'vertical', fontSize: '11px', lineHeight: '1.4', color: 'var(--text-normal)', background: 'var(--background-primary)', padding: '6px 8px', border: '1px solid var(--background-modifier-border)', borderRadius: '4px', outline: 'none', borderLeft: `2px solid ${statusColor}` }}
-                    />
-                )}
-            </div>
-          </div>
-          <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '8px' }}>
-              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', flex: 1 }}>{tags.map((tag, i) => (<span key={i} className="node-tag">{tag}</span>))}</div>
-              <div className="open-file-btn" onClick={(e) => { e.stopPropagation(); data.onOpenFile(data.path); }} title="Open file">↗ <span>{data.file}</span></div>
-          </div>
-          {compactRows.length > 0 && (
-            <div className="nodrag" style={{ marginTop: '10px', borderTop: '1px solid var(--background-modifier-border)', paddingTop: '6px' }}>
-              {compactRows.map(({ task, depth, onToggle, onOpenFile }) => (
-                <div key={task.id} onMouseDown={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '3px 0 3px ' + (depth * 12) + 'px', fontSize: '11px' }}>
-                  <input type="checkbox" checked={task.status === 'x'} readOnly onClick={e => e.stopPropagation()} onChange={() => { void onToggle(); }} />
-                  <span style={{ flex: 1, opacity: task.status === 'x' ? 0.6 : 1, textDecoration: task.status === 'x' ? 'line-through' : 'none', wordBreak: 'break-word' }}>{task.text}</span>
-                  <span onClick={e => { e.stopPropagation(); onOpenFile(); }} style={{ cursor: 'pointer', color: 'var(--text-muted)' }} title="Open file">↗</span>
-                </div>
-              ))}
-            </div>
-          )}
-      </div>
-      <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="custom-handle custom-handle-right" style={{ right: '-20px', width: '40px', height: '40px', top: '50%', transform: 'translateY(-50%)' }} />
-      {data.hasChildren && <button className="task-collapse-btn nodrag" onClick={(e) => { e.stopPropagation(); void data.onToggleCollapse(data.id, data.isCollapsed); }} onMouseDown={e => e.stopPropagation()} title={data.isCollapsed ? 'Expand child nodes' : 'Collapse child nodes'} aria-label={data.isCollapsed ? 'Expand child nodes' : 'Collapse child nodes'}>{data.isCollapsed ? '+' : '−'}</button>}
-    </div>
-  );
-});
 
 const TextNode = React.memo(({ data, isConnectable }: { data: TextNodeData, isConnectable: boolean }) => {
     const [text, setText] = React.useState(data.label);
@@ -185,7 +68,7 @@ const TextNode = React.memo(({ data, isConnectable }: { data: TextNodeData, isCo
     );
 });
 
-const nodeTypes = { task: TaskNode, text: TextNode };
+const nodeTypes = { task: TaskNode, text: TextNode, groupFrame: GroupNode };
 
 const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText: string, onClose: () => void, onSave: (text: string) => void | Promise<void>, allTags: string[] }) => {
     const [text, setText] = React.useState(initialText);
@@ -297,10 +180,12 @@ const TaskSidebar = React.memo(({ nodes, onNodeCenter, onStatusChange, onSearch 
     const maxRows = Math.max(1, Math.floor((availableHeight - 198) / (3 * (rowHeight + rowGap))));
     const { inProgress, pending, backlog } = React.useMemo(() => {
         const tasks = nodes.filter(isTaskNode);
+        const groups = nodes.filter(node => node.type === 'groupFrame');
+        const statusOf = (node: AppNode) => isTaskNode(node) ? (node.data.customStatus || 'backlog') : ((node.data as GroupNodeData).status || 'backlog');
         return {
-            inProgress: tasks.filter(n => n.data.customStatus === 'in_progress'),
-            pending: tasks.filter(n => n.data.customStatus === 'pending'),
-            backlog: tasks.filter(n => n.data.customStatus === 'backlog' || n.data.customStatus === 'default' || !n.data.customStatus)
+            inProgress: [...tasks, ...groups].filter(n => statusOf(n) === 'in_progress'),
+            pending: [...tasks, ...groups].filter(n => statusOf(n) === 'pending'),
+            backlog: [...tasks, ...groups].filter(n => statusOf(n) === 'backlog' || statusOf(n) === 'default')
         };
     }, [nodes]);
     const stopProp = (e: React.MouseEvent | React.WheelEvent) => e.stopPropagation();
@@ -309,34 +194,31 @@ const TaskSidebar = React.memo(({ nodes, onNodeCenter, onStatusChange, onSearch 
     const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
     const handleDrop = (e: React.DragEvent, targetStatus: string) => { e.preventDefault(); const nodeId = e.dataTransfer.getData('nodeId'); if (nodeId) void onStatusChange(nodeId, targetStatus); };
 
-    const renderList = (title: string, items: Node<TaskNodeData, 'task'>[], color: string, className: string, statusKey: string) => (
+    const renderList = (title: string, items: AppNode[], color: string, className: string, statusKey: string) => (
         <div className={`sidebar-section${items.length === 0 ? ' is-empty' : ''}`} onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, statusKey)}>
             <div className="sidebar-title" style={{ color: color }}><div style={{ width: 6, height: 6, borderRadius: '50%', background: color }}></div>{title} <span style={{ opacity: 0.5 }}>({items.length})</span></div>
             <div className="sidebar-list" style={{ height: items.length ? Math.min(items.length, maxRows) * (rowHeight + rowGap) - rowGap : 16 }}>
                 {items.map(node => (
-                    <div key={node.id} className={`sidebar-item item-${className}`} onClick={() => onNodeCenter(node.id)} draggable onDragStart={(e) => handleDragStart(e, node.id)}>{node.data.label.replace(/#\S+/g, '').trim()}</div>
+                    <div key={node.id} className={`sidebar-item item-${className} ${node.type === 'groupFrame' ? 'sidebar-group-item' : ''}`} onClick={() => onNodeCenter(node.id)} draggable onDragStart={(e) => handleDragStart(e, node.id)}>{node.type === 'groupFrame' ? `▣ ${node.data.label}` : node.data.label.replace(/#\S+/g, '').trim()}</div>
                 ))}
                 {items.length === 0 && <div style={{ fontSize: '11px', color: 'var(--text-faint)', paddingLeft: '10px' }}>Empty - Drop here</div>}
             </div>
         </div>
     );
-    return (<div ref={sidebarRef} className="task-sidebar" onMouseDown={stopProp} onWheel={stopProp} onContextMenu={stopProp}><div style={{ marginBottom: '16px', fontSize: '16px', lineHeight: '24px', flexShrink: 0, fontWeight: '800', letterSpacing: '-0.5px', color: 'var(--text-normal)'  , display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>My tasks<button type="button" className="task-sidebar-search" aria-label={isSimplifiedChinese() ? "搜索任务" : "Search tasks"} onClick={onSearch}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg></button></div>{renderList('In progress', inProgress, STATUS_COLORS['in_progress'], 'in-progress', 'in_progress')}{renderList('Pending', pending, STATUS_COLORS['pending'], 'pending', 'pending')}{renderList('Backlog', backlog, STATUS_COLORS['backlog'], 'backlog', 'backlog')}</div>);
+    return (<div ref={sidebarRef} className="task-sidebar" onMouseDown={stopProp} onWheel={stopProp} onContextMenu={stopProp}><div style={{ marginBottom: '16px', fontSize: '16px', lineHeight: '24px', flexShrink: 0, fontWeight: '800', letterSpacing: '-0.5px', color: 'var(--text-normal)'  , display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>My tasks<button type="button" className="task-sidebar-search" aria-label={isSimplifiedChinese() ? "搜索任务" : "Search tasks"} onClick={onSearch}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg></button></div>{renderList('In progress', inProgress, STATUS_COLORS['in_progress'], 'in-progress', 'in_progress')}{renderList('Pending', pending, STATUS_COLORS['pending'], 'pending', 'pending')}{renderList('Backlog', backlog, STATUS_COLORS['backlog'], 'backlog', 'backlog')}</div>);
 }, (previous, next) => previous.onNodeCenter === next.onNodeCenter
     && previous.onStatusChange === next.onStatusChange && previous.onSearch === next.onSearch
     && previous.nodes.length === next.nodes.length && previous.nodes.every((node, index) => {
         const current = next.nodes[index];
         if (!current || node.id !== current.id || node.type !== current.type) return false;
-        return !isTaskNode(node) || (isTaskNode(current)
-            && node.data.label === current.data.label && node.data.customStatus === current.data.customStatus);
+        if (isTaskNode(node) && isTaskNode(current)) return node.data.label === current.data.label && node.data.customStatus === current.data.customStatus;
+        if (node.type === 'groupFrame' && current.type === 'groupFrame') {
+            const before = node.data as GroupNodeData; const after = current.data as GroupNodeData;
+            return before.label === after.label && before.status === after.status;
+        }
+        return false;
     }));
 
-const GraphToolbar = () => {
-    const { zoomIn, zoomOut, fitView } = useReactFlow();
-    const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
-    const btnStyle: React.CSSProperties = { width: '32px', height: '32px', background: 'var(--background-secondary)', border: '1px solid var(--background-modifier-border)', color: 'var(--text-normal)', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', marginBottom: '8px' };
-
-    return (<Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '20px', display: 'flex', flexDirection: 'column', pointerEvents: 'all' }} onMouseDown={stopPropagation}><button style={btnStyle} onClick={() => { zoomIn(); }} title="Zoom in"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button><button style={btnStyle} onClick={() => { zoomOut(); }} title="Zoom out"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg></button><button style={{...btnStyle, marginBottom: 0}} onClick={() => { fitView({duration: 800}); }} title="Fit view"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg></button></Panel>);
-};
 
 interface ControlPanelProps {
     boards: GraphBoard[];
@@ -674,14 +556,9 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   const connectionMadeRef = React.useRef(false);
 
   const activeBoard = plugin.settings.boards.find(b => b.id === activeBoardId && !b.archived) || plugin.settings.boards.find(b => !b.archived);
+  const groupWorkspace = useGroupWorkspace(plugin, activeBoardId, view, nodes, setNodes, () => setRefreshKey(key => key + 1));
 
-  const handleToggleCollapse = React.useCallback(async (id: string, collapsed: boolean) => {
-      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
-      if (!board) return;
-      const collapsedNodes = { ...(board.data.collapsedNodes || {}), [id]: !collapsed };
-      await plugin.saveBoardData(activeBoardId, { collapsedNodes });
-      setRefreshKey(prev => prev + 1);
-  }, [plugin, activeBoardId]);
+  const handleToggleCollapse = async (id: string) => { await groupWorkspace.collapse(id); };
 
   React.useEffect(() => {
       const refresh = () => setRefreshKey(prev => prev + 1);
@@ -714,7 +591,6 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       const savedEdges = boardConfig?.data.edges || [];
       const savedNodeStatus = boardConfig?.data.nodeStatus || {};
       const savedTextNodes = boardConfig?.data.textNodes || [];
-      const savedCollapsedNodes = boardConfig?.data.collapsedNodes || {};
       const taskById = new Map(tasks.map(task => [task.id, task]));
       const childrenById: Record<string, string[]> = {};
       for (const edge of savedEdges) {
@@ -722,12 +598,6 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
               (childrenById[edge.source] ||= []).push(edge.target);
           }
       }
-      const collapsedIds = new Set(Object.entries(savedCollapsedNodes).filter(([, collapsed]) => collapsed).map(([id]) => id));
-      const hiddenIds = hiddenDescendants(childrenById, collapsedIds);
-      const getCompactChildren = (id: string): CompactTaskRow[] => compactDescendants(childrenById, id).flatMap(({ id: childId, depth }) => {
-          const task = taskById.get(childId);
-          return task ? [{ task, depth, onToggle: () => handleToggleTask(task.id, task.status, task.path, task.line, task.source), onOpenFile: () => { void openTaskLocation(plugin.app, task); } }] : [];
-      });
 
       const taskNodes: Node<TaskNodeData, 'task'>[] = tasks.map((t, index) => {
         const posX = savedLayout[t.id]?.x ?? ((index % 3) * 320);
@@ -736,14 +606,13 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
         if (t.status === 'x') finalCustomStatus = 'finished';
 
         return {
-            id: t.id, type: 'task', hidden: hiddenIds.has(t.id), position: { x: posX, y: posY },
+            id: t.id, type: 'task', position: { x: posX, y: posY },
             data: {
                 id: t.id, label: t.text, notes: t.notes, status: t.status, file: t.file, path: t.path, line: t.line, endLine: t.endLine,
                 customStatus: t.source === 'tasknotes' ? t.statusCategory : finalCustomStatus,
                 source: t.source, rawStatus: t.rawStatus,
                 hasChildren: (childrenById[t.id] || []).length > 0,
-                isCollapsed: !!savedCollapsedNodes[t.id],
-                compactChildren: savedCollapsedNodes[t.id] && !hiddenIds.has(t.id) ? getCompactChildren(t.id) : [],
+                isCollapsed: false,
                 onToggleCollapse: handleToggleCollapse,
                 onSaveNotes: handleSaveTaskNotes,
                 onEdit: handleEditTask, onToggleStatus: handleToggleTask,
@@ -758,8 +627,12 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       }));
 
       // 泛型合并后自动转推为 Node<AppNodeData>[]，消灭强制断言
-      setNodes([...taskNodes, ...textNodes] as AppNode[]);
-      setEdges(savedEdges);
+      const scene = groupWorkspace.scene([...taskNodes, ...textNodes], savedEdges, id => {
+          const task = [...plugin.taskCache.values()].flat().find(item => item.id === id);
+          if (task) void handleToggleTask(task.id, task.status, task.path, task.line, task.source);
+      });
+      setNodes(scene.nodes);
+      setEdges(scene.edges);
 
       if (prevBoardIdRef.current !== activeBoardId) {
           const savedViewport = boardConfig?.data.viewport;
@@ -780,7 +653,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
         }, 180);
         boardSwitchTimers.current.push(timer);
     }
-  }, [plugin, activeBoardId, refreshKey, reactFlowInstance]);
+  }, [plugin, activeBoardId, refreshKey, reactFlowInstance, groupWorkspace.scope]);
 
   const placeConnectionChoices = React.useCallback((sourceId: string, clientX: number, clientY: number) => {
       const bounds = canvasRef.current?.getBoundingClientRect();
@@ -801,21 +674,22 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           return;
       }
       const source = nodes.find(node => node.id === sourceId);
-      if (!source || !isTaskNode(source)) return;
+      if (!source) return;
       connectionChoicesRef.current = null;
       setConnectionChoices(null);
       if (action === 'search') {
           setSearchConnectionSource(source.id);
           setShowTaskSearch(true);
-      } else if (source.data.source === 'checklist') {
-          setCreateTarget({ sourceNodeId: source.id, sourcePath: source.data.path });
+      } else {
+          const path = groupWorkspace.sourcePath(source.id);
+          if (path) setCreateTarget({ sourceNodeId: source.id, sourcePath: path });
       }
   }, [nodes]);
 
   React.useEffect(() => {
       if (!isConnecting || connectionStartRef.current.handleType !== 'source') return;
       const sourceId = connectionStartRef.current.nodeId;
-      if (!sourceId || !nodes.some(node => node.id === sourceId && isTaskNode(node))) return;
+      if (!sourceId || !nodes.some(node => node.id === sourceId && (isTaskNode(node) || node.type === 'groupFrame'))) return;
       const doc = view.containerEl.ownerDocument;
       const trackPointer = (event: MouseEvent | TouchEvent) => {
           const point = 'touches' in event ? event.touches[0] : event;
@@ -898,7 +772,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           return;
       }
       const sourceId = connectionStartRef.current.nodeId;
-      if (target?.classList.contains('react-flow__pane') && sourceId && nodes.some(node => node.id === sourceId && isTaskNode(node))) {
+      if (target?.classList.contains('react-flow__pane') && sourceId && nodes.some(node => node.id === sourceId && (isTaskNode(node) || node.type === 'groupFrame'))) {
           if (!connectionChoicesRef.current) placeConnectionChoices(sourceId, point.clientX, point.clientY);
       } else { connectionChoicesRef.current = null; setConnectionChoices(null); }
   }, [nodes, view, chooseConnectionAction, placeConnectionChoices]);
@@ -965,6 +839,15 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   };
 
   const updateNodeStatus = async (nodeId: string, status: string) => {
+      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
+      const group = board?.data.groups?.find(item => item.id === nodeId);
+      if (group) {
+          const colors: Record<string, string> = { backlog: '#8e8e93', pending: '#ff9500', in_progress: '#34c759', blocked: '#ff3b30', finished: '#af52de' };
+          await plugin.saveBoardData(activeBoardId, { groups: (board?.data.groups || []).map(item => item.id === nodeId
+              ? { ...item, status: status as 'backlog' | 'pending' | 'in_progress' | 'blocked' | 'finished', color: colors[status] || colors.backlog } : item) });
+          setRefreshKey(key => key + 1);
+          return;
+      }
       setNodes((nds) => nds.map((n) => {
           if (n.id === nodeId && isTaskNode(n)) {
               const updatedData: TaskNodeData = { ...n.data, customStatus: status };
@@ -972,9 +855,9 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           }
           return n;
       }));
-      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
-      if (board) {
-          const nodeStatus = board.data.nodeStatus || {};
+      const taskBoard = plugin.settings.boards.find(b => b.id === activeBoardId);
+      if (taskBoard) {
+          const nodeStatus = taskBoard.data.nodeStatus || {};
           nodeStatus[nodeId] = status;
           await plugin.saveBoardData(activeBoardId, { nodeStatus });
       }
@@ -986,77 +869,42 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   };
 
   const onMoveEnd = React.useCallback((event: MouseEvent | TouchEvent | null, viewport: Viewport) => {
+      if (groupWorkspace.scope) return;
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (board) {
           board.data.viewport = viewport;
           void debouncedSaveBoardData.then(save => save(activeBoardId, { viewport }));
       }
-  }, [plugin, activeBoardId, debouncedSaveBoardData]);
+  }, [plugin, activeBoardId, debouncedSaveBoardData, groupWorkspace.scope]);
 
   const handleCreateTask = async (text: string) => {
       if (!createTarget) return;
       const newId = await plugin.appendTaskToFile(createTarget.sourcePath, text);
       if (newId) {
           const parentNode = nodes.find(n => n.id === createTarget.sourceNodeId);
-          let newX = 0, newY = 0; if (parentNode) { newX = parentNode.position.x + 400; newY = parentNode.position.y; }
-          const newEdge = { id: `e${createTarget.sourceNodeId}-${newId}`, source: createTarget.sourceNodeId, target: newId, animated: true };
+          let newX = 0, newY = 0; if (parentNode) { newX = parentNode.position.x + (parentNode.type === 'groupFrame' ? (parentNode.width || 300) + 80 : 400); newY = parentNode.position.y; }
           const board = plugin.settings.boards.find(b => b.id === activeBoardId);
-          if (board) { board.data.edges = [...board.data.edges, newEdge]; board.data.layout = { ...board.data.layout, [newId]: { x: newX, y: newY } }; await plugin.saveSettings(); }
+          if (board) {
+              board.data.layout = { ...board.data.layout, [newId]: { x: newX, y: newY } };
+              if (groupWorkspace.scope) board.data.groups = (board.data.groups || []).map(group => group.id === groupWorkspace.scope ? { ...group, members: [...group.members, newId] } : group);
+              await plugin.saveSettings();
+          }
+          await connectGraphObjects(plugin, activeBoardId, createTarget.sourceNodeId, newId, nodes);
           setCreateTarget(null); setRefreshKey(prev => prev + 1);
       }
   };
 
   const onConnect = React.useCallback((params: Connection) => {
-      void (async () => {
-          connectionMadeRef.current = true;
-          if (!params.source || !params.target) return;
-
-          const newSourceId = await plugin.ensureBlockId(activeBoardId, params.source);
-          const newTargetId = await plugin.ensureBlockId(activeBoardId, params.target);
-
-          const newEdge = { id: `e${newSourceId}-${newTargetId}`, source: newSourceId, target: newTargetId, animated: true };
-
-          setNodes(nds => nds.map(n => {
-              if (n.id === params.source) return { ...n, id: newSourceId };
-              if (n.id === params.target) return { ...n, id: newTargetId };
-              return n;
-          }));
-
-          setEdges((eds) => {
-              const updatedEds = eds.map(e => {
-                  const eSource = e.source === params.source ? newSourceId : (e.source === params.target ? newTargetId : e.source);
-                  const eTarget = e.target === params.source ? newSourceId : (e.target === params.target ? newTargetId : e.target);
-                  return { ...e, source: eSource, target: eTarget, id: `e${eSource}-${eTarget}` };
-              });
-              return addEdge(newEdge, updatedEds);
-          });
-
-          const board = plugin.settings.boards.find(b => b.id === activeBoardId);
-          if (board) {
-              const remapId = (id: string) => id === params.source ? newSourceId : id === params.target ? newTargetId : id;
-              const layout = { ...board.data.layout };
-              for (const node of nodes) {
-                  if (node.type !== 'task') continue;
-                  const nextId = remapId(node.id);
-                  const savedPosition = layout[node.id] || node.position;
-                  layout[nextId] = savedPosition;
-                  if (nextId !== node.id) delete layout[node.id];
-              }
-              const edges = board.data.edges.map(edge => {
-                  const source = remapId(edge.source);
-                  const target = remapId(edge.target);
-                  return { ...edge, source, target, id: `e${source}-${target}` };
-              });
-              if (!edges.some(edge => edge.id === newEdge.id)) edges.push(newEdge);
-              board.data.edges = edges;
-              board.data.layout = layout;
-              await plugin.saveSettings();
-          }
-          setRefreshKey(prev => prev + 1);
-      })();
-  }, [plugin, activeBoardId, nodes, setEdges, setNodes]);
+      connectionMadeRef.current = true;
+      if (!params.source || !params.target) return;
+      void connectGraphObjects(plugin, activeBoardId, params.source, params.target, nodes)
+          .then(() => setRefreshKey(key => key + 1))
+          .catch(() => new Notice('Could not create connection. Try again.'));
+  }, [plugin, activeBoardId, nodes]);
 
   const onNodeDragStop = React.useCallback((event: React.MouseEvent, node: Node) => {
+      groupWorkspace.selectionEnd(event);
+      if (node.type === 'groupFrame') { void groupWorkspace.dragStop(node); return; }
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if(!board) return;
 
@@ -1064,6 +912,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           if (node.type === 'task') {
               const layout = { ...board.data.layout, [node.id]: node.position };
               save(activeBoardId, { layout });
+              setRefreshKey(key => key + 1);
           } else if (node.type === 'text') {
               const textNodes = board.data.textNodes.map(tn => tn.id === node.id ? { ...tn, x: node.position.x, y: node.position.y } : tn);
               save(activeBoardId, { textNodes });
@@ -1108,17 +957,46 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
 
   const onEdgeContextMenu = React.useCallback((event: React.MouseEvent, edge: Edge) => {
       event.preventDefault(); event.stopPropagation();
-      setEdges((eds) => {
-          const newEdges = eds.filter((e) => e.id !== edge.id);
-          void plugin.saveBoardData(activeBoardId, { edges: newEdges });
-          return newEdges;
-      });
+      const saved = plugin.settings.boards.find(board => board.id === activeBoardId)?.data.edges || [];
+      void plugin.saveBoardData(activeBoardId, { edges: saved.filter(item => item.id !== edge.id) }).then(() => setRefreshKey(key => key + 1));
       new Notice("Connection removed.");
   }, [plugin, activeBoardId, setEdges]);
 
   const onNodeContextMenu = React.useCallback((event: React.MouseEvent, node: Node) => {
       event.preventDefault(); event.stopPropagation(); const menu = new Menu();
-      if (node.type === 'task') {
+      if (node.type === 'groupFrame') {
+          const group = plugin.settings.boards.find(board => board.id === activeBoardId)?.data.groups?.find(item => item.id === node.id);
+          if (group) {
+              const groupStatuses = [
+                  ['backlog', 'Backlog', '#8e8e93'], ['pending', 'Pending', '#ff9500'],
+                  ['in_progress', 'In progress', '#34c759'], ['blocked', 'Blocked', '#ff3b30'], ['finished', 'Finished', '#af52de']
+              ] as const;
+              for (const [status, label, color] of groupStatuses) {
+                  menu.addItem(item => {
+                      const title = event.currentTarget.ownerDocument.createDocumentFragment();
+                      const row = title.createEl('span', { cls: 'task-status-menu-label' });
+                      const marker = row.createEl('span', { cls: 'task-status-menu-marker' });
+                      marker.setCssProps({ '--task-status-color': color });
+                      marker.setAttribute('aria-hidden', 'true');
+                      row.appendText(`Group · ${label}`);
+                      title.append(row);
+                      item.setTitle(title).onClick(() => {
+                      void plugin.saveBoardData(activeBoardId, { groups: (plugin.settings.boards.find(board => board.id === activeBoardId)?.data.groups || [])
+                          .map(item => item.id === group.id ? { ...item, status, color } : item) }).then(() => setRefreshKey(key => key + 1));
+                      });
+                  });
+              }
+              menu.addItem(item => item.setTitle('Group: reset color').onClick(() => {
+                  void plugin.saveBoardData(activeBoardId, { groups: (plugin.settings.boards.find(board => board.id === activeBoardId)?.data.groups || [])
+                      .map(item => item.id === group.id ? { ...item, color: undefined } : item) }).then(() => setRefreshKey(key => key + 1));
+              }));
+          }
+          menu.showAtPosition({ x: event.nativeEvent.clientX, y: event.nativeEvent.clientY });
+          return;
+      }
+      const parentTask = node.type === 'groupFrame' ? (node.data as GroupNodeData).task : undefined;
+      if (node.type === 'task' || parentTask) {
+          const taskId = parentTask?.id || node.id;
           const statuses = [
               ['backlog', 'Backlog'], ['pending', 'Pending'], ['in_progress', 'In progress'],
               ['blocked', 'Blocked'], ['finished', 'Finished']
@@ -1132,7 +1010,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
               row.append(marker);
               row.appendText(label);
               title.append(row);
-              menu.addItem(item => item.setTitle(title).onClick(() => { void updateNodeStatus(node.id, status); }));
+              menu.addItem(item => item.setTitle(title).onClick(() => { void updateNodeStatus(taskId, status); }));
           }
       } else if (node.type === 'text') {
           menu.addItem((item) => item.setTitle('Delete note').onClick(() => {
@@ -1202,12 +1080,16 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
 
   const handleAutoLayout = async () => {
       if (plugin.settings.autoSyncHierarchy) await handleSyncRelations(false);
-      const effectiveEdges = plugin.settings.boards.find(b => b.id === activeBoardId)?.data.edges || edges;
+      const parents = groupParents(activeBoard?.data.groups || []);
+      const layoutNodes = nodes.filter(node => !node.hidden && parents.get(node.id) === (groupWorkspace.scope || undefined));
+      const allowed = new Set(layoutNodes.map(node => node.id));
+      const effectiveEdges = projectLayoutEdges(activeBoard?.data.groups || [], activeBoard?.data.edges || edges, groupWorkspace.scope)
+          .filter(edge => allowed.has(edge.source) && allowed.has(edge.target));
       const undirectedAdj: Record<string, string[]> = {};
       const directedAdj: Record<string, string[]> = {};
       const inDegree: Record<string, number> = {};
 
-      nodes.forEach(n => { undirectedAdj[n.id] = []; directedAdj[n.id] = []; inDegree[n.id] = 0; });
+      layoutNodes.forEach(n => { undirectedAdj[n.id] = []; directedAdj[n.id] = []; inDegree[n.id] = 0; });
       effectiveEdges.forEach((e: Edge) => {
           const sourceDir = directedAdj[e.source]; const sourceUndir = undirectedAdj[e.source]; const targetUndir = undirectedAdj[e.target];
           if (sourceDir) sourceDir.push(e.target);
@@ -1220,7 +1102,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       const isolatedActiveIds: string[] = [];
       const isolatedFinishedIds: string[] = [];
 
-      nodes.forEach(n => {
+      layoutNodes.forEach(n => {
           const isFinishedTask = isTaskNode(n) && (n.data.status === 'x' || n.data.customStatus === 'finished');
           const isConnected = (undirectedAdj[n.id]?.length ?? 0) > 0;
           if (isConnected) connectedNodeIds.add(n.id);
@@ -1246,11 +1128,11 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       const COL_WIDTH = 320; const COMPONENT_GAP = 60; const MIN_GAP = 30; const DEFAULT_NODE_HEIGHT = 100;
       const nodeHeightMap: Record<string, number> = {};
       // React Flow already measures nodes; avoid querying and measuring every DOM card.
-      nodes.forEach(n => { nodeHeightMap[n.id] = n.height || DEFAULT_NODE_HEIGHT; });
+      layoutNodes.forEach(n => { nodeHeightMap[n.id] = n.height || DEFAULT_NODE_HEIGHT; });
 
-      const nodeMap = new Map(nodes.map(n => [n.id, n]));
+      const nodeMap = new Map(layoutNodes.map(n => [n.id, n]));
       const getUserOrderRank = (ids: string[]): string[] => { return [...ids].sort((a, b) => { const yA = nodeMap.get(a)?.position?.y ?? 0; const yB = nodeMap.get(b)?.position?.y ?? 0; return yA - yB; }); };
-      const componentResults: { comp: string[]; height: number }[] = [];
+      const componentResults: { comp: string[]; height: number; originalY: number }[] = [];
 
       const componentByNode = new Map<string, number>();
       components.forEach((comp, index) => comp.forEach(id => componentByNode.set(id, index)));
@@ -1332,8 +1214,13 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
               }
           }
 
+          const columnX: number[] = [0];
+          for (let lvl = 1; lvl <= maxLevel; lvl++) {
+              const widths = (levelGroups[lvl - 1] || []).map(id => nodeMap.get(id)?.width || 240);
+              columnX[lvl] = columnX[lvl - 1]! + Math.max(COL_WIDTH, ...widths.map(width => width + 80));
+          }
           const compLayout: Record<string, { x: number; y: number }> = {};
-          comp.forEach(id => { compLayout[id] = { x: (level[id] ?? 0) * COL_WIDTH, y: posY[id] ?? 0 }; });
+          comp.forEach(id => { compLayout[id] = { x: columnX[level[id] ?? 0] || 0, y: posY[id] ?? 0 }; });
           const allYs = Object.values(compLayout).map(p => p.y);
           const minY = Math.min(...allYs);
           Object.values(compLayout).forEach(p => { p.y -= minY; });
@@ -1341,12 +1228,21 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           let compMaxBottom = 0;
           comp.forEach(id => { const y = compLayout[id]?.y ?? 0; const h = nodeHeightMap[id] ?? DEFAULT_NODE_HEIGHT; compMaxBottom = Math.max(compMaxBottom, y + h); });
           comp.forEach(id => { layout[id] = { ...compLayout[id]! }; });
-          componentResults.push({ comp, height: compMaxBottom });
+          const originalY = Math.min(...comp.map(id => nodeMap.get(id)?.position.y ?? 0));
+          componentResults.push({ comp, height: compMaxBottom, originalY });
       });
 
-      componentResults.sort((a, b) => b.comp.length - a.comp.length);
+      // Keep the existing vertical order of independent trees. The previous size-based
+      // sort restarted every component at y=0, which made adding a group move trees
+      // above or below one another even when their relationships had not changed.
+      componentResults.sort((a, b) => a.originalY - b.originalY);
       let globalY = 0;
-      componentResults.forEach(cr => { cr.comp.forEach(id => { if (layout[id]) layout[id].y += globalY; }); globalY += cr.height + COMPONENT_GAP; });
+      componentResults.forEach(cr => {
+          const top = Math.max(cr.originalY, globalY);
+          const offset = top;
+          cr.comp.forEach(id => { if (layout[id]) layout[id].y += offset; });
+          globalY = top + cr.height + COMPONENT_GAP;
+      });
 
       if (isolatedActiveIds.length > 0) {
           const sorted = getUserOrderRank(isolatedActiveIds); const COLS = 3; const ISO_ROW_GAP = 140; const startY = globalY;
@@ -1359,31 +1255,35 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           isolatedFinishedIds.forEach((id, idx) => { const row = Math.floor(idx / COLS); const col = idx % COLS; layout[id] = { x: col * COL_WIDTH, y: startY + row * COMPACT_GAP }; });
       }
 
-      setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] ?? n.position })));
+      const translated = groupWorkspace.moveGroups(groupWorkspace.scope ? anchorGroupLayout(layout, layoutNodes) : layout);
+      setNodes(nds => nds.map(n => ({ ...n, position: translated[n.id] ?? n.position })));
 
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (board) {
           const mergedLayout = { ...board.data.layout }; const updatedTextNodes = board.data.textNodes.map(tn => ({ ...tn }));
-          const taskPaths = [...new Set([...(board.data.taskPaths || []), ...nodes.filter(isTaskNode).map(node => node.data.path).filter(Boolean)])];
+          const taskPaths = [...new Set([...(board.data.taskPaths || []), ...layoutNodes.filter(isTaskNode).map(node => node.data.path).filter(Boolean)])];
           const textNodeIndex = new Map(updatedTextNodes.map((node, index) => [node.id, index]));
-          Object.keys(layout).forEach(nodeId => {
-              const node = nodeMap.get(nodeId); const newPos = layout[nodeId];
+          Object.keys(translated).forEach(nodeId => {
+              const node = nodes.find(item => item.id === nodeId); const newPos = translated[nodeId];
               if (newPos !== undefined) {
                   if (node?.type === 'task') mergedLayout[nodeId] = newPos;
                   else if (node?.type === 'text') { const tnIndex = textNodeIndex.get(nodeId) ?? -1; if (tnIndex > -1) { const textNodeToUpdate = updatedTextNodes[tnIndex]; if (textNodeToUpdate !== undefined) { textNodeToUpdate.x = newPos.x; textNodeToUpdate.y = newPos.y; } } }
               }
           });
-          await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes, taskPaths });
+          await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes, taskPaths,
+              groups: (board.data.groups || []).map(group => ({ ...group, position: translated[group.id] || group.position })) });
+          setRefreshKey(key => key + 1);
       }
 
 
 
       if (plugin.settings.autoFitAfterLayout) {
-          const activeNodesToFocus = nodes.filter(n => {
+          const activeNodesToFocus = layoutNodes.filter(n => {
+              if (n.type === 'groupFrame') return true;
               if (isTaskNode(n)) return !(n.data.status === 'x' || n.data.customStatus === 'finished');
               return false;
           });
-          const nodesToFit = activeNodesToFocus.length > 0 ? activeNodesToFocus : nodes;
+          const nodesToFit = activeNodesToFocus.length > 0 ? activeNodesToFocus : layoutNodes;
           const fitViewNodes = nodesToFit.map(n => ({ id: n.id }));
 
           window.setTimeout(() => {
@@ -1426,19 +1326,9 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       setPendingFocusId(nodeId);
       const board = plugin.settings.boards.find(board => board.id === activeBoardId);
       if (!board || !nodes.find(node => node.id === nodeId)?.hidden) return;
-      const ancestors = new Set<string>([nodeId]);
-      const queue = [nodeId];
-      while (queue.length) {
-          const child = queue.pop();
-          for (const edge of board.data.edges) {
-              if (edge.target !== child || ancestors.has(edge.source)) continue;
-              ancestors.add(edge.source);
-              queue.push(edge.source);
-          }
-      }
-      const collapsedNodes = { ...board.data.collapsedNodes };
-      for (const id of ancestors) collapsedNodes[id] = false;
-      void plugin.saveBoardData(activeBoardId, { collapsedNodes }).then(() => setRefreshKey(key => key + 1));
+      groupWorkspace.navigate(null);
+      const groups = board.data.groups || [];
+      void plugin.saveBoardData(activeBoardId, { groups: groups.map(group => groupDescendants(groups, group.id).has(nodeId) ? { ...group, collapsed: false } : group) }).then(() => setRefreshKey(key => key + 1));
   };
 
   React.useEffect(() => {
@@ -1461,7 +1351,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   return (
     <div ref={canvasRef} className={`task-graph-container ${isConnecting ? 'is-connecting' : ''} ${isBoardSwitching ? 'is-board-switching' : ''} ${!plugin.isCacheInitialized ? 'is-task-loading' : ''}`} aria-busy={isBoardSwitching || !plugin.isCacheInitialized} onContextMenu={onPaneContextMenu}>
       <TaskSidebar nodes={nodes} onNodeCenter={centerSidebarTask} onStatusChange={changeSidebarStatus} onSearch={openTaskSearch} />
-      {showTaskSearch && <TaskSearch mode={searchConnectionSource ? 'connect' : 'focus'} tasks={nodes.filter(isTaskNode).filter(node => node.id !== searchConnectionSource && (!searchConnectionSource || !edges.some(edge => edge.source === searchConnectionSource && edge.target === node.id))).map(node => ({ id: node.id, label: node.data.label, path: node.data.path }))}
+      {showTaskSearch && <TaskSearch mode={searchConnectionSource ? 'connect' : 'focus'} tasks={searchConnectionSource ? groupWorkspace.searchTargets(searchConnectionSource) : nodes.filter(isTaskNode).map(node => ({ id: node.id, label: node.data.label, path: node.data.path }))}
           onClose={() => { setShowTaskSearch(false); setSearchConnectionSource(null); }} onSelect={id => {
               setShowTaskSearch(false);
               if (searchConnectionSource) {
@@ -1471,13 +1361,17 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           }} />}
       {connectionChoices && !connectionActionsHidden && <ConnectionActions x={connectionChoices.x} y={connectionChoices.y}
           activeAction={isConnecting ? connectionActiveAction : null}
-          canCreate={nodes.some(node => node.id === connectionChoices.sourceId && isTaskNode(node) && node.data.source === 'checklist')}
+          canCreate={!!groupWorkspace.sourcePath(connectionChoices.sourceId)}
           onChoose={chooseConnectionAction} />}
       <ReactFlow
         nodes={nodes} edges={edges}
         onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
         onConnect={onConnect} onConnectStart={onConnectStart} onConnectEnd={onConnectEnd}
+        onNodeClick={groupWorkspace.selectionEnd}
+        onSelectionStart={groupWorkspace.selectionStart} onSelectionEnd={groupWorkspace.selectionEnd}
+        onSelectionDragStart={groupWorkspace.selectionStart} onSelectionDragStop={groupWorkspace.selectionEnd}
         onNodeDragStop={onNodeDragStop}
+        onNodeDragStart={groupWorkspace.dragStart} onNodeDrag={groupWorkspace.drag}
         onMoveEnd={onMoveEnd}
         onEdgeContextMenu={onEdgeContextMenu}
         onNodeContextMenu={onNodeContextMenu}
@@ -1485,7 +1379,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
         nodeTypes={nodeTypes}
         defaultEdgeOptions={{ type: 'default', style: { strokeWidth: 2, stroke: 'var(--interactive-accent)' } }}
         fitView minZoom={0.1} maxZoom={4}
-        nodesDraggable={true} nodesConnectable={true} elementsSelectable={true}
+        nodesDraggable={true} nodesConnectable={true} elementsSelectable={true} nodeDragThreshold={2}
         snapToGrid={true} snapGrid={[24, 24]}
         proOptions={{ hideAttribution: true }}
         panOnScroll={true} zoomOnScroll={true} preventScrolling={false}
@@ -1496,7 +1390,8 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
         <Background gap={24} color="rgba(150,150,150,0.1)" size={1.5} />
 
         <ControlPanel boards={plugin.settings.boards.filter(board => !board.archived)} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onArchiveBoard={handleArchiveBoard} onAutoLayout={handleAutoLayout} onSyncRelations={handleSyncRelations} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} onApplyFilters={handleApplyFilters} onRequestConfirm={(msg: string, action: () => void) => setConfirmReq({ message: msg, action })} allTags={allTags} allFolders={allFolders} />
-        <GraphToolbar />
+        <GraphToolbar onBack={groupWorkspace.scope ? groupWorkspace.back : undefined} onCanvas={groupWorkspace.scope ? () => groupWorkspace.navigate(null) : undefined} />
+        {groupWorkspace.controls}
 
         <Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '70px', zIndex: 99, pointerEvents: 'none' }}>
             <div style={{ position: 'relative', pointerEvents: 'all' }}>
