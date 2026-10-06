@@ -21,6 +21,12 @@ assert.deepEqual([...g.groupDescendants(groups, outer)].sort(), [first,'a','b','
 assert.equal(g.groupParents(groups).get(first), outer);
 assert.equal(g.groupParents(groups).get('a'), first);
 assert.equal(g.groupingError(['a',first], groups, edges) !== null, true);
+// A complete existing group can be nested; selecting one of its members cannot.
+assert.equal(g.groupingError([first, 'c'], groups, edges), null);
+assert.equal(g.groupingError(['a', 'c'], groups, edges) !== null, true);
+assert.equal(g.groupingError([first, 'a'], groups, edges) !== null, true);
+assert.deepEqual([...g.selectionObjectsForTree(new Set(['a', 'b', 'c']), groups, null)].sort(), [outer].sort());
+assert.deepEqual([...g.selectionObjectsForTree(new Set(['a', 'b', 'c']), groups, first)].sort(), ['a', 'b'].sort());
 groups[0].collapsed = true;
 assert.equal(g.visibleEndpoint('a', groups, null), first);
 groups[1].collapsed = true;
@@ -131,3 +137,4 @@ assert.equal(board.data.edges[1].source,'group-frame');
 await connections.connectGraphObjects(plugin,'board','group-frame','external',[]);
 assert.equal(board.data.edges.length,2);
 console.log('Stable member IDs and shared group connection tests passed');
+

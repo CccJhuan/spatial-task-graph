@@ -5,7 +5,7 @@ import type { Node, Edge, Viewport } from 'reactflow';
 import type TaskGraphPlugin from './main';
 import type { TaskNodeData } from './TaskNode';
 import type { AppNode, AppNodeData, TaskGraphView } from './TaskGraphView';
-import { addGroup, cleanGroups, groupDescendants, groupParents, groupingError, migrateCollapsedGroups, removeGroup, treeSelection, nextGroupTitle, createEndpointResolver, translateGroupLayout } from './groups';
+import { addGroup, cleanGroups, groupDescendants, groupParents, groupingError, migrateCollapsedGroups, removeGroup, treeSelection, selectionObjectsForTree, nextGroupTitle, translateGroupLayout } from './groups';
 import type { GraphGroup } from './groups';
 import { groupScene } from './GroupNode';
 import { openTaskLocation } from './taskNavigation';
@@ -186,10 +186,8 @@ export function useGroupWorkspace(plugin: TaskGraphPlugin, boardId: string, view
             const allTasks = new Set([...plugin.taskCache.values()].flat().map(task => task.id));
             const seeds = selected.flatMap(node => node.type === 'groupFrame' ? [...groupDescendants(groups(), node.id)] : [node.id]);
             const ids = treeSelection(seeds, board()?.data.edges || [], allTasks);
-            const allowed = currentScope ? groupDescendants(groups(), currentScope) : null;
-            const endpoint = createEndpointResolver(groups(), currentScope);
-            const representatives = new Set([...ids].filter(id => !allowed || allowed.has(id)).map(endpoint));
-            setNodes(current => current.map(node => ({ ...node, selected: (ids.has(node.id) && (!allowed || allowed.has(node.id))) || representatives.has(node.id) })));
+            const representatives = selectionObjectsForTree(ids, groups(), currentScope);
+            setNodes(current => current.map(node => ({ ...node, selected: representatives.has(node.id) })));
 
         };
         doc.addEventListener('keydown', onKey, true);
@@ -271,3 +269,4 @@ export function useGroupWorkspace(plugin: TaskGraphPlugin, boardId: string, view
     };
     return { selectionStart, selectionEnd, scope: currentScope, back: () => navigate(groupParents(groups()).get(currentScope || '') || null), scene, collapse, sourcePath, dragStart, drag, dragStop, controls, navigate, searchTargets, moveGroups };
 }
+

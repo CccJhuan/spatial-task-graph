@@ -55,11 +55,38 @@ export function treeSelection(seeds: string[], edges: Edge[], tasks: Set<string>
     return seen;
 }
 
+/** Convert a tree selection to objects at the current group level. */
+export function selectionObjectsForTree(ids: Set<string>, groups: GraphGroup[], scope: string | null): Set<string> {
+    const allowed = scope ? groupDescendants(groups, scope) : null;
+    const parents = groupParents(groups);
+    const objects = new Set<string>();
+    for (const id of ids) {
+        if (allowed && !allowed.has(id)) continue;
+        let object = id;
+        const seen = new Set<string>();
+        while (parents.has(object) && !seen.has(object)) {
+            seen.add(object);
+            const parent = parents.get(object)!;
+            if (parent === scope) break;
+            object = parent;
+        }
+        objects.add(object);
+    }
+    return objects;
+}
+
 /** Map a task edge to the direct objects at the selection's common level. */
 export function groupingError(ids: string[], groups: GraphGroup[], edges: Edge[]): string | null {
     const selected = new Set(ids);
     if (selected.size < 2) return 'Select at least two connected objects.';
     const parents = groupParents(groups);
+    // A group ID is a single selectable object. Its descendants must not be
+    // mixed into another selection; selecting the group itself nests the
+    // complete group in a larger group.
+    const selectedGroups = ids.filter(id => groups.some(group => group.id === id));
+    if (selectedGroups.some(groupId => ids.some(id => id !== groupId && groupDescendants(groups, groupId).has(id)))) {
+        return 'Select the complete group as one object; individual members cannot be moved to another group.';
+    }
     if (new Set(ids.map(id => parents.get(id))).size !== 1) return 'Select whole groups at the same level; members cannot belong to two groups.';
     const mapped = projectLayoutEdges(groups, edges, parents.get(ids[0]!) || null);
     return treeSelection([ids[0]!], mapped, selected).size === selected.size ? null : 'Selected objects must be connected without unselected intermediate objects.';

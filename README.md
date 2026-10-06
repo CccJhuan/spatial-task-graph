@@ -25,6 +25,7 @@ Manage your tasks spatially with fluid mouse gestures.
 
 * Select a task and press **Ctrl+A** (**Cmd+A** on macOS) to select its tree. Hold **Shift** and select nodes to add to the selection.
 * Select at least two connected objects at the same level, then choose **Create group**. Each object belongs to one parent group; whole groups can be nested.
+* A member task cannot be placed in another group while it belongs to a group. Select the existing group frame itself to nest the complete group inside a larger group.
 * Tasks inside expanded groups remain individually selectable and movable. Folding a parent task keeps its task card and child checklist inside an automatically named group frame.
 * Drag a group title to move its members together. Collapse it to show a nested task checklist, or double-click its title to enter the group. Use **Back** to return to the previous level.
 * Connect a group directly to another task or group without expanding it. Existing task connections keep their original endpoints when the group is expanded.
