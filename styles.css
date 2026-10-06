@@ -23,12 +23,12 @@
 /* 任务节点与交互自定义样式 (搬运自原 CUSTOM_STYLES)                             */
 /* -------------------------------------------------------------------------- */
 .task-graph-container { width: 100%; height: 100%; position: relative; background: var(--background-primary); font-family: var(--font-interface); color: var(--text-normal); }
-.task-group-frame { box-sizing: border-box; border: 2px solid var(--interactive-accent); border-radius: 14px; background: transparent; pointer-events: none; }
+.task-group-frame { position: relative; box-sizing: border-box; border: 2px solid var(--interactive-accent); border-radius: 14px; background: transparent; pointer-events: none; }
 .react-flow__node.selected .task-group-frame { box-shadow: 0 0 0 3px var(--background-modifier-border); }
-.task-group-title { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 10px; border-radius: 10px 10px 0 0; background: var(--background-secondary); color: var(--text-normal); cursor: grab; pointer-events: auto; }
+.task-group-title { position: absolute; z-index: 3; top: calc(-38px * var(--task-group-scale, 1)); left: 0; display: flex; align-items: center; gap: calc(8px * var(--task-group-scale, 1)); min-height: calc(32px * var(--task-group-scale, 1)); padding: calc(3px * var(--task-group-scale, 1)) calc(6px * var(--task-group-scale, 1)); border-radius: 6px 6px 0 0; background: var(--background-primary); color: var(--text-normal); cursor: grab; pointer-events: auto; }
 .task-group-title strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-group-actions { display: flex; gap: 3px; }
-.task-group-actions button, .task-group-row button { padding: 2px 6px; min-height: 24px; box-shadow: none; }
+.task-group-actions { display: flex; gap: calc(3px * var(--task-group-scale, 1)); }
+.task-group-actions button, .task-group-row button { padding: calc(2px * var(--task-group-scale, 1)) calc(6px * var(--task-group-scale, 1)); min-width: calc(24px * var(--task-group-scale, 1)); min-height: calc(24px * var(--task-group-scale, 1)); font-size: calc(13px * var(--task-group-scale, 1)); box-shadow: none; }
 .task-group-frame .react-flow__handle { pointer-events: auto; }
 .task-group-frame .task-group-handle-left { left: -20px; top: 50%; transform: translateY(-50%); }
 .task-group-frame .task-group-handle-right { right: -20px; left: auto; top: 50%; transform: translateY(-50%); }
@@ -322,7 +322,7 @@ input[type="checkbox"].filter-checkbox:checked::after { content: ''; position: a
     color: white;
 }
 
-.task-group-card { padding: 12px; pointer-events: auto; }
+.task-group-card { margin-top: 12px; padding: 12px; pointer-events: auto; }
 .task-group-card .task-node-wrapper { width: 100%; box-sizing: border-box; }
 .task-compact-children { margin-top: 10px; border-top: 1px solid var(--background-modifier-border); padding-top: 6px; }
 .task-compact-children .is-complete { opacity: 0.6; text-decoration: line-through; }
@@ -331,7 +331,7 @@ input[type="checkbox"].filter-checkbox:checked::after { content: ''; position: a
 .task-graph-toolbar button { width: 32px; height: 32px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); color: var(--text-normal); border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
 .task-graph-toolbar .task-graph-toolbar-canvas { margin-bottom: 8px; }
 .task-group-path { align-self: center; color: var(--text-muted); font-size: 12px; }
-.task-group-status { flex-shrink: 0; color: var(--task-group-color); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.task-group-status { flex-shrink: 0; color: var(--task-group-color); font-size: calc(10px * var(--task-group-scale, 1)); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 .task-group-title-input { min-width: 0; flex: 1; border: 0; border-bottom: 2px solid var(--interactive-accent); outline: none; padding: 2px 4px; background: var(--background-primary); color: var(--text-normal); font-family: var(--font-interface); font-weight: 700; }
 
 .task-group-create-action { position: absolute; z-index: 100; pointer-events: auto; padding: 7px 12px; border-radius: 8px; background: var(--background-secondary); color: var(--text-normal); border: 1px solid var(--background-modifier-border); box-shadow: 0 4px 12px rgba(0,0,0,0.15); white-space: nowrap; }

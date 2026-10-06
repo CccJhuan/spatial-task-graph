@@ -22,14 +22,15 @@ export interface GroupNodeData {
 export const GroupNode = React.memo(({ data, isConnectable }: { data: GroupNodeData; isConnectable: boolean }) => {
     const zh = isSimplifiedChinese();
     const { zoom } = useViewport();
-    const titleSize = Math.min(30, Math.max(14, 17 / Math.max(zoom, 0.35)));
+    const groupScale = Math.min(2, Math.max(0.75, 1 / Math.max(zoom, 0.35)));
+    const titleSize = Math.min(60, Math.max(14, 17 / Math.max(zoom, 0.35)));
     const [editing, setEditing] = React.useState(false);
     const [draft, setDraft] = React.useState(data.label);
     const inputRef = React.useRef<HTMLInputElement>(null);
     React.useEffect(() => { if (!editing) setDraft(data.label); }, [data.label, editing]);
     React.useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
     const finishRename = () => { setEditing(false); const next = draft.trim(); if (next && next !== data.label) data.onRename(next); };
-    return <div className={`task-group-frame ${data.collapsed ? 'is-collapsed' : ''}`} style={{ width: data.width, minHeight: data.height, borderColor: data.color || 'var(--interactive-accent)', '--task-group-color': data.color || 'var(--interactive-accent)' } as React.CSSProperties}>
+    return <div className={`task-group-frame ${data.collapsed ? 'is-collapsed' : ''}`} style={{ width: data.width, minHeight: data.height, borderColor: data.color || 'var(--interactive-accent)', '--task-group-color': data.color || 'var(--interactive-accent)', '--task-group-scale': groupScale } as React.CSSProperties}>
         <Handle type="target" position={Position.Left} className="custom-handle task-group-handle-left" isConnectable={isConnectable} />
         <header className="task-group-title" onDoubleClick={event => { event.stopPropagation(); data.onEnter(); }}>
             {data.status && <span className="task-group-status" title={data.status}>{data.status === 'in_progress' ? 'In progress' : data.status.charAt(0).toUpperCase() + data.status.slice(1)}</span>}
@@ -73,7 +74,7 @@ export function groupScene<T>(base: Node<T>[], groups: GraphGroup[], edges: Edge
         visiting.delete(group.id);
         if (!members.length) return;
         const x = Math.min(...members.map(node => node.position.x)) - 24;
-        const y = Math.min(...members.map(node => node.position.y)) - 48;
+        const y = Math.min(...members.map(node => node.position.y)) - 24;
         const width = Math.max(...members.map(node => node.position.x + (node.width || 240))) - x + 24;
         const height = Math.max(...members.map(node => node.position.y + (node.height || 160))) - y + 24;
         const data = dataFor(group);
