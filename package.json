@@ -7,7 +7,7 @@
     "scripts": {
         "dev": "node esbuild.config.mjs",
         "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-        "test": "node scripts/test-tasknotes-adapter.mjs && node scripts/test-performance.mjs",
+        "test": "node scripts/test-tasknotes-adapter.mjs && node scripts/test-performance.mjs && node scripts/test-groups.mjs && node scripts/test-startup-cache.mjs",
         "benchmark:performance": "node scripts/test-performance.mjs --benchmark",
         "version": "node version-bump.mjs && git add manifest.json versions.json",
         "lint": "eslint ."

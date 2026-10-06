@@ -6,6 +6,9 @@ import { archiveBoard, restoreBoard, deleteArchivedBoard } from './boardArchive'
 import { checklistRanges } from './checklistRanges';
 import { SaveQueue } from './saveQueue';
 import { taskListsEqual } from './taskCacheEquality';
+import { readTaskSnapshot, writeTaskSnapshot, snapshotMatches, TaskSnapshotEntry } from './taskSnapshot';
+import type { GraphGroup } from './groups';
+import { remapGraphReferences } from './groups';
 import { FilterCondition, getFilterConditions, createFilterMatcher } from './taskFilters';
 import { frontmatterTags, matchesTaskNotesIdentifier, parseTaskNotesFrontmatter, taskNotesStatusForCategory, TaskNotesSettings, TaskNotesStatusCategory } from './tasknotesAdapter';
 
@@ -33,7 +36,7 @@ export interface GraphBoard {
 	archived?: boolean;
 	id: string; name: string;
 	filters: { tags: string[]; excludeTags: string[]; folders: string[]; status: string[]; tagMode?: 'AND' | 'OR'; conditions?: FilterCondition[]; };
-	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; collapsedNodes?: Record<string, boolean>; taskPaths?: string[]; generatedBlockIds?: string[]; }
+	data: { layout: Record<string, { x: number, y: number }>; edges: Edge[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: Viewport; collapsedNodes?: Record<string, boolean>; taskPaths?: string[]; generatedBlockIds?: string[]; groups?: GraphGroup[]; }
 }
 
 interface TaskGraphSettings { 
@@ -42,10 +45,6 @@ interface TaskGraphSettings {
     taskNotes: TaskNotesSettings;
     autoFitAfterLayout: boolean; // 新增：排版后是否自动缩放
     autoSyncHierarchy: boolean;
-}
-
-interface CachedFilesMetadataCache {
-    getCachedFiles(): string[];
 }
 
 const DEFAULT_BOARD: GraphBoard = {
@@ -79,6 +78,31 @@ export default class TaskGraphPlugin extends Plugin {
     taskCache: Map<string, TaskCacheItem[]> = new Map();
     isCacheInitialized: boolean = false;
     private settingsWriter = new SaveQueue(() => this.saveData(this.settings));
+    private taskSnapshots = new Map<string, TaskSnapshotEntry>();
+    private snapshotSignature = '';
+    private snapshotLoaded = false;
+    private snapshotLoad: Promise<void> | undefined;
+    private snapshotTimer: number | undefined;
+    private snapshotDirty = false;
+    private cacheRun = 0;
+    private fileUpdates = new Map<string, number>();
+    private snapshotWriter = new SaveQueue(async () => {
+        await this.app.vault.adapter.write(this.snapshotPath(), writeTaskSnapshot(this.taskSnapshots, this.snapshotSignature));
+    });
+
+    private snapshotPath(): string {
+        return `${this.manifest.dir || `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/task-cache.json`;
+    }
+
+    private scheduleSnapshot(): void {
+        this.snapshotDirty = true;
+        if (!this.snapshotLoaded || this.snapshotTimer !== undefined) return;
+        this.snapshotTimer = window.setTimeout(() => {
+            this.snapshotTimer = undefined;
+            this.snapshotDirty = false;
+            void this.snapshotWriter.request().catch(error => console.error('Task graph cache write failed', error));
+        }, 2000);
+    }
 
 	debouncedRefresh = debounce(() => {
 		if (this.viewRefresh) this.viewRefresh();
@@ -93,6 +117,7 @@ export default class TaskGraphPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+        await this.loadSnapshot();
         
         this.addSettingTab(new TaskGraphSettingTab(this.app, this));
 
@@ -131,11 +156,18 @@ export default class TaskGraphPlugin extends Plugin {
             void this.updateFileCache(file);
         }));
         this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
+            this.taskSnapshots.delete(oldPath);
+            this.fileUpdates.set(oldPath, (this.fileUpdates.get(oldPath) || 0) + 1);
+            this.scheduleSnapshot();
+            if (file instanceof TFile) void this.updateFileCache(file);
             if (this.taskCache.has(oldPath)) {
                 const tasks = this.taskCache.get(oldPath);
                 this.taskCache.delete(oldPath);
-                if (tasks) this.taskCache.set(file.path, tasks);
+                const remap = (id: string) => id === oldPath ? file.path : id.startsWith(`${oldPath}::`) ? file.path + id.slice(oldPath.length) : id;
+                if (tasks) this.taskCache.set(file.path, tasks.map(task => ({ ...task, id: remap(task.id), path: file.path,
+                    file: file instanceof TFile ? file.basename : task.file })));
                 for (const board of this.settings.boards) {
+                    board.data = remapGraphReferences(board.data, remap);
                     if (board.data.taskPaths?.includes(oldPath)) {
                         board.data.taskPaths = board.data.taskPaths.map(path => path === oldPath ? file.path : path);
                     }
@@ -145,6 +177,9 @@ export default class TaskGraphPlugin extends Plugin {
             }
         }));
         this.registerEvent(this.app.vault.on('delete', (file) => {
+            this.taskSnapshots.delete(file.path);
+            this.fileUpdates.set(file.path, (this.fileUpdates.get(file.path) || 0) + 1);
+            this.scheduleSnapshot();
             if (this.taskCache.has(file.path)) {
                 this.taskCache.delete(file.path);
                 for (const board of this.settings.boards) {
@@ -160,41 +195,94 @@ export default class TaskGraphPlugin extends Plugin {
         });
 	}
 
+    private async loadSnapshot(): Promise<void> {
+        if (this.snapshotLoaded) return;
+        if (!this.snapshotLoad) this.snapshotLoad = (async () => {
+            const signature = JSON.stringify(this.settings.taskNotes);
+            try {
+                const raw = await this.app.vault.adapter.read(this.snapshotPath());
+                const restored = readTaskSnapshot(raw, signature);
+                // Metadata events that arrived during the read take precedence.
+                for (const [path, entry] of this.taskSnapshots) restored.set(path, entry);
+                this.taskSnapshots = restored;
+            } catch { /* A missing cache is normal on first startup. */ }
+            this.snapshotLoaded = true;
+            this.snapshotSignature = signature;
+        })();
+        await this.snapshotLoad;
+    }
+
     async initializeCache(forceFullScan = false) {
-        const indexedPaths = this.settings.boards.flatMap(board => board.data.taskPaths || []);
-        const shouldUseIndex = !forceFullScan && this.settings.boards.every(board => Array.isArray(board.data.taskPaths));
-        const paths = shouldUseIndex ? [...new Set(indexedPaths)] : (this.app.metadataCache as unknown as CachedFilesMetadataCache).getCachedFiles();
-        const files = paths
-            .filter(path => path.endsWith('.md'))
-            .map(path => this.app.vault.getAbstractFileByPath(path))
-            .filter((file): file is TFile => file instanceof TFile);
+        const run = ++this.cacheRun;
+        await this.loadSnapshot();
+        if (run !== this.cacheRun) return;
+        const signature = JSON.stringify(this.settings.taskNotes);
+        if (forceFullScan || this.snapshotSignature !== signature) {
+            this.taskSnapshots.clear();
+            this.snapshotSignature = signature;
+        }
+        // Enumerating file stats also detects files added or deleted while Obsidian was closed.
+        const files = this.app.vault.getMarkdownFiles();
+        const paths = new Set(files.map(file => file.path));
+        for (const path of this.taskSnapshots.keys()) if (!paths.has(path)) this.taskSnapshots.delete(path);
+        for (const path of this.taskCache.keys()) if (!paths.has(path)) this.taskCache.delete(path);
+        const pending: TFile[] = [];
+        for (const file of files) {
+            const entry = this.taskSnapshots.get(file.path);
+            if (snapshotMatches(entry, file.stat)) {
+                if (entry!.tasks.length) this.taskCache.set(file.path, entry!.tasks);
+                else this.taskCache.delete(file.path);
+            } else pending.push(file);
+        }
         let nextIndex = 0;
         const worker = async () => {
-            while (nextIndex < files.length) {
-                const file = files[nextIndex++];
+            while (run === this.cacheRun && nextIndex < pending.length) {
+                const file = pending[nextIndex++];
                 if (file) await this.updateFileCache(file, false);
             }
         };
-        await Promise.all(Array.from({ length: Math.min(8, files.length) }, () => worker()));
-        if (!shouldUseIndex) {
-            const taskPaths = [...this.taskCache.entries()]
-                .filter(([, tasks]) => tasks.length > 0)
-                .map(([path]) => path);
+        await Promise.all(Array.from({ length: Math.min(8, pending.length) }, () => worker()));
+        if (run !== this.cacheRun) return;
+        const taskPaths = [...this.taskCache.keys()];
+        if (this.settings.boards.some(board => JSON.stringify(board.data.taskPaths) !== JSON.stringify(taskPaths))) {
             for (const board of this.settings.boards) board.data.taskPaths = [...taskPaths];
             await this.saveSettings();
         }
         this.isCacheInitialized = true;
+        this.scheduleSnapshot();
         this.debouncedRefresh();
     }
 
     async updateFileCache(file: import('obsidian').TAbstractFile, triggerRefresh = true) {
         if (!(file instanceof TFile) || file.extension !== 'md') return;
         
+        const entry = this.taskSnapshots.get(file.path);
+        if (this.snapshotSignature === JSON.stringify(this.settings.taskNotes) && snapshotMatches(entry, file.stat)) {
+            this.storeFileTasks(file.path, entry!.tasks, triggerRefresh);
+            return;
+        }
         const cache = this.app.metadataCache.getFileCache(file);
+        // Metadata may not be ready yet; do not persist a false empty result.
+        if (!cache) return;
+        const revision = (this.fileUpdates.get(file.path) || 0) + 1;
+        this.fileUpdates.set(file.path, revision);
+        const stat = { mtime: file.stat.mtime, size: file.stat.size };
+        const signature = JSON.stringify(this.settings.taskNotes);
+        const commit = (tasks: TaskCacheItem[]) => {
+            if (this.fileUpdates.get(file.path) !== revision || file.stat.mtime !== stat.mtime
+                || file.stat.size !== stat.size || JSON.stringify(this.settings.taskNotes) !== signature
+                || this.app.vault.getAbstractFileByPath(file.path) !== file) return;
+            const previous = this.taskSnapshots.get(file.path);
+            if (!snapshotMatches(previous, stat) || !taskListsEqual(previous?.tasks, tasks)) {
+                this.taskSnapshots.set(file.path, { ...stat, tasks });
+                this.scheduleSnapshot();
+            }
+            this.storeFileTasks(file.path, tasks, triggerRefresh);
+        };
         const hasTaskNotesCandidate = Boolean(this.settings.taskNotes.enabled && cache?.frontmatter && matchesTaskNotesIdentifier(cache.frontmatter, this.settings.taskNotes));
         const hasChecklistCandidate = Boolean(cache?.listItems?.some(item => Boolean(item?.task)));
         if (!hasTaskNotesCandidate && !hasChecklistCandidate) {
-            this.storeFileTasks(file.path, [], triggerRefresh);
+            commit([]);
             return;
         }
         const content = await this.app.vault.cachedRead(file);
@@ -217,7 +305,7 @@ export default class TaskGraphPlugin extends Plugin {
         }
 
         if (!cache?.listItems || tasks.some(task => task.source === 'tasknotes')) {
-            this.storeFileTasks(file.path, tasks, triggerRefresh);
+            commit(tasks);
             return;
         }
 
@@ -290,19 +378,19 @@ export default class TaskGraphPlugin extends Plugin {
             });
         }
 
-        this.storeFileTasks(file.path, tasks, triggerRefresh);
+        commit(tasks);
     }
 
     private storeFileTasks(path: string, tasks: TaskCacheItem[], triggerRefresh: boolean) {
         const previous = this.taskCache.get(path);
         if ((!previous || previous.length === 0) && tasks.length === 0) {
-            this.trackTaskPath(path, false);
+            if (triggerRefresh && this.isCacheInitialized) this.trackTaskPath(path, false);
             return;
         }
         if (taskListsEqual(previous, tasks)) return;
         if (tasks.length) this.taskCache.set(path, tasks);
         else this.taskCache.delete(path);
-        this.trackTaskPath(path, tasks.length > 0);
+        if (triggerRefresh && this.isCacheInitialized) this.trackTaskPath(path, tasks.length > 0);
         if (triggerRefresh && this.isCacheInitialized) this.debouncedRefresh();
     }
 
@@ -323,7 +411,13 @@ export default class TaskGraphPlugin extends Plugin {
         if (changed) this.persistTaskPathIndexes();
     }
 
-	onunload() { }
+    onunload() {
+        this.cacheRun++;
+        if (this.snapshotTimer !== undefined) window.clearTimeout(this.snapshotTimer);
+        if (this.snapshotLoaded && this.snapshotDirty) {
+            void this.snapshotWriter.request().catch(error => console.error('Task graph cache write failed', error));
+        }
+    }
 
 	async loadSettings() {
         // 使用类型断言将 any 显式收敛为我们的目标类型
@@ -478,6 +572,7 @@ export default class TaskGraphPlugin extends Plugin {
             board.data.edges = [];
             board.data.nodeStatus = {};
             board.data.collapsedNodes = {};
+            board.data.groups = [];
         }
 
         let removedCount = 0;
@@ -497,6 +592,8 @@ export default class TaskGraphPlugin extends Plugin {
         }
 
         this.taskCache.clear();
+        this.taskSnapshots.clear();
+        this.scheduleSnapshot();
         this.isCacheInitialized = true;
         await this.saveSettings();
         this.debouncedRefresh();
@@ -580,8 +677,17 @@ export default class TaskGraphPlugin extends Plugin {
             const newTaskLine = `- [ ] ${cleanText} ^${randomBlockId}`;
 			
             await this.app.vault.append(file, `${prefix}${newTaskLine}`);
+            const id = `${filePath}::^${randomBlockId}`;
+            const line = content.split('\n').length - (content.endsWith('\n') ? 1 : 0);
+            const parts = cleanText.split('\n');
+            const task: TaskCacheItem = { id, text: parts[0] || '', notes: parts.slice(1).join('\n'), status: ' ',
+                file: file.basename, path: filePath, line, endLine: line + parts.length - 1,
+                rawText: cleanText, source: 'checklist', rawStatus: ' ', statusCategory: 'backlog' };
+            this.taskCache.set(filePath, [...(this.taskCache.get(filePath) || []).filter(item => item.id !== id), task]);
+            this.trackTaskPath(filePath, true);
+            this.debouncedRefresh();
             
-            return `${filePath}::^${randomBlockId}`;
+            return id;
 		} catch (err) { 
             console.error("TaskGraph Plugin Error appending task:", err);
             return null; 
@@ -614,6 +720,8 @@ export default class TaskGraphPlugin extends Plugin {
         const matchesConditions = createFilterMatcher(getFilterConditions(filters));
         
 		const connectedTaskIds = new Set<string>();
+        const groupedTaskIds = new Set((board.data.groups || []).flatMap(group => group.members));
+        for (const id of groupedTaskIds) connectedTaskIds.add(id);
 		board.data.edges.forEach((e: Edge) => { 
 			connectedTaskIds.add(e.source);
 			connectedTaskIds.add(e.target);
@@ -634,7 +742,7 @@ export default class TaskGraphPlugin extends Plugin {
                 return (isConnected || filters.status.length === 0 || filters.status.includes(task.status));
             };
             const matchesTagFilters = (task: TaskCacheItem) => {
-                if (!matchesConditions(task.rawText, path)) return false;
+                if (!groupedTaskIds.has(task.id) && !matchesConditions(task.rawText, path)) return false;
                 return filters.excludeTags.length === 0 || !filters.excludeTags.some(tag => task.rawText.includes(tag));
             };
             const isIncluded = (task: TaskCacheItem, visiting = new Set<string>()): boolean => {
