@@ -21,6 +21,14 @@ Manage your tasks spatially with fluid mouse gestures.
     ![Add Text Notes](images/add-text-note.gif)
 * **Batch Move:** Hold Left Click to box-select multiple nodes and move them as a group.
 
+### Nested task groups
+
+* Select a task and press **Ctrl+A** (**Cmd+A** on macOS) to select its tree. Hold **Shift** and select nodes to add to the selection.
+* Select at least two connected objects at the same level, then choose **Create group**. Each object belongs to one parent group; whole groups can be nested.
+* Tasks inside expanded groups remain individually selectable and movable. Folding a parent task keeps its task card and child checklist inside an automatically named group frame.
+* Drag a group title to move its members together. Collapse it to show a nested task checklist, or double-click its title to enter the group. Use **Back** to return to the previous level.
+* Connect a group directly to another task or group without expanding it. Existing task connections keep their original endpoints when the group is expanded.
+
 ### 3. Seamless Creation Flow
 Don't break your flow. Create new tasks directly from the canvas.
 * **Drag-to-Create:** Drag a connection line to an empty space to instantly open the creation modal. The new task is automatically appended to the parent file and linked.
@@ -45,6 +53,10 @@ Right-click any task node to quickly change its priority or status color via the
 2. Create a folder `spatial-task-graph` in your vault's `.obsidian/plugins/` directory.
 3. Move the files into that folder.
 4. Reload Obsidian and enable the plugin.
+
+## Startup cache
+
+Parsed tasks are cached locally in `task-cache.json` inside the plugin folder. On subsequent launches, unchanged files reuse that cache; changed files and new files are parsed again. TaskNotes configuration changes invalidate the cache. The **Rebuild task document index** command rebuilds it, and a missing or damaged cache is rebuilt automatically. The cache uses additional disk space and contains copies of task text and notes; no data leaves the vault.
 
 ## Privacy
 
