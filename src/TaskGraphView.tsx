@@ -973,7 +973,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
               ] as const;
               for (const [status, label, color] of groupStatuses) {
                   menu.addItem(item => {
-                      const title = event.currentTarget.ownerDocument.createDocumentFragment();
+                      const title = new DocumentFragment();
                       const row = title.createEl('span', { cls: 'task-status-menu-label' });
                       const marker = row.createEl('span', { cls: 'task-status-menu-marker' });
                       marker.setCssProps({ '--task-status-color': color });
@@ -1002,7 +1002,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
               ['blocked', 'Blocked'], ['finished', 'Finished']
           ] as const;
           for (const [status, label] of statuses) {
-              const title = event.currentTarget.ownerDocument.createDocumentFragment();
+              const title = new DocumentFragment();
               const row = title.createEl('span', { cls: 'task-status-menu-label' });
               const marker = row.createEl('span', { cls: 'task-status-menu-marker' });
               marker.setCssProps({ '--task-status-color': STATUS_COLORS[status] });
@@ -1245,14 +1245,23 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       });
 
       if (isolatedActiveIds.length > 0) {
-          const sorted = getUserOrderRank(isolatedActiveIds); const COLS = 3; const ISO_ROW_GAP = 140; const startY = globalY;
-          sorted.forEach((id, idx) => { const row = Math.floor(idx / COLS); const col = idx % COLS; layout[id] = { x: col * COL_WIDTH, y: startY + row * ISO_ROW_GAP }; });
-          const maxRow = Math.floor((sorted.length - 1) / COLS); globalY = startY + (maxRow + 1) * ISO_ROW_GAP + COMPONENT_GAP;
+          // A complete task tree represented by a group is an isolated layout
+          // object. Keep its existing position so creating a group does not
+          // move the whole tree below the other components.
+          const sorted = getUserOrderRank(isolatedActiveIds);
+          sorted.forEach((id, idx) => {
+              const node = nodeMap.get(id);
+              layout[id] = node?.position ? { ...node.position } : { x: (idx % 3) * COL_WIDTH, y: globalY + Math.floor(idx / 3) * 140 };
+          });
+          globalY = Math.max(globalY, ...sorted.map(id => (layout[id]?.y || 0) + (nodeHeightMap[id] || DEFAULT_NODE_HEIGHT) + COMPONENT_GAP));
       }
 
       if (isolatedFinishedIds.length > 0) {
-          const COLS = 4; const COMPACT_GAP = 100; const startY = globalY;
-          isolatedFinishedIds.forEach((id, idx) => { const row = Math.floor(idx / COLS); const col = idx % COLS; layout[id] = { x: col * COL_WIDTH, y: startY + row * COMPACT_GAP }; });
+          const sorted = getUserOrderRank(isolatedFinishedIds);
+          sorted.forEach((id, idx) => {
+              const node = nodeMap.get(id);
+              layout[id] = node?.position ? { ...node.position } : { x: (idx % 4) * COL_WIDTH, y: globalY + Math.floor(idx / 4) * 100 };
+          });
       }
 
       const translated = groupWorkspace.moveGroups(groupWorkspace.scope ? anchorGroupLayout(layout, layoutNodes) : layout);
