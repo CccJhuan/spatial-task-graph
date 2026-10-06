@@ -31,3 +31,39 @@ Spatial Task Graph 1.1.7 重点改善了多任务树和组合框的组织体验�
 3. 更新到 **1.1.7** 并重新加载插件。
 
 手动安装时，请下载 Release 中的 `main.js`、`manifest.json` 和 `styles.css`。
+
+---
+
+# 🎉 1.1.7: Grouping and Layout Experience Update
+
+Spatial Task Graph 1.1.7 improves the way complex task trees are organized, viewed, and maintained on the canvas.
+
+## 🗂️ Group experience
+
+- Supports nested groups, so an entire task tree can be placed inside a larger group.
+- Group titles appear outside the frame and support inline renaming, collapsing, expanding, and entering the group view.
+- Groups support the same Backlog, Pending, In progress, and Finished statuses and colors as tasks.
+- Groups appear in the HUD and can be moved between status sections by dragging.
+- Tasks inside a group keep their original font size while group titles and controls scale with the group.
+
+## 🌳 Selection and connections
+
+- Supports marquee selection, Shift multi-select, and Ctrl/Cmd+A tree selection.
+- A group can only be created from same-level objects that are directly connected within the selection.
+- Connections can be created from a group without expanding its internal task tree.
+- Nested group views provide path navigation for entering and returning between levels.
+
+## ⚡ Layout and stability
+
+- Preserves the relative vertical positions between independent task trees after grouping or running Layout.
+- Improves startup performance by reusing task snapshots and reducing repeated file reads.
+- Uses Obsidian-native element helpers for status menus.
+- Retains TaskNotes integration, hierarchy synchronization, archived boards, and task index cleanup.
+
+## 📥 Installation and updates
+
+1. Open **Settings → Community plugins**.
+2. Search for **Spatial Task Graph**.
+3. Update to **1.1.7** and reload the plugin.
+
+For manual installation, download `main.js`, `manifest.json`, and `styles.css` from this release.
