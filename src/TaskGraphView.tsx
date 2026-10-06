@@ -628,6 +628,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   const canvasRef = React.useRef<HTMLDivElement>(null);
   const [connectionChoices, setConnectionChoices] = React.useState<{ sourceId: string; x: number; y: number } | null>(null);
   const connectionChoicesRef = React.useRef<typeof connectionChoices>(null);
+  const [connectionActionsHidden, setConnectionActionsHidden] = React.useState(false);
   const [connectionActiveAction, setConnectionActiveAction] = React.useState<'search' | 'cancel' | 'create' | null>(null);
   const [searchConnectionSource, setSearchConnectionSource] = React.useState<string | null>(null);
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
@@ -821,11 +822,13 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
           if (!point) return;
           const target = doc.elementFromPoint(point.clientX, point.clientY);
           if (target?.closest('.react-flow__node')) {
+              setConnectionActionsHidden(true);
               setConnectionActiveAction(null);
               return;
           }
           const bounds = canvasRef.current?.getBoundingClientRect();
           if (!bounds || !canvasRef.current?.contains(target)) { setConnectionActiveAction(null); return; }
+          setConnectionActionsHidden(false);
           if (!connectionChoicesRef.current) placeConnectionChoices(sourceId, point.clientX, point.clientY);
           const choices = connectionChoicesRef.current;
           if (choices) {
@@ -862,6 +865,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       setConnectionChoices(null);
       setConnectionActiveAction(null);
       connectionStartRef.current = params;
+      setConnectionActionsHidden(false);
       connectionMadeRef.current = false;
       setIsConnecting(true);
   }, []);
@@ -1465,7 +1469,7 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
                   setSearchConnectionSource(null);
               } else handleSidebarClick(id);
           }} />}
-      {connectionChoices && <ConnectionActions x={connectionChoices.x} y={connectionChoices.y}
+      {connectionChoices && !connectionActionsHidden && <ConnectionActions x={connectionChoices.x} y={connectionChoices.y}
           activeAction={isConnecting ? connectionActiveAction : null}
           canCreate={nodes.some(node => node.id === connectionChoices.sourceId && isTaskNode(node) && node.data.source === 'checklist')}
           onChoose={chooseConnectionAction} />}
